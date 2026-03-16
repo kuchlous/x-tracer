@@ -14,8 +14,7 @@
     "path": "tests/cases/synthetic/multibit/reg4_bit1_inject",
     "status": "golden",
     "author": "agent-S3"
-  }
-  ,
+  },
   {
     "id": "synth_s2_ff_chain_depth2",
     "category": "synthetic/structural",
@@ -31,5 +30,21 @@
     "path": "tests/cases/synthetic/structural/reconverge_depth2",
     "status": "golden",
     "author": "agent-S2"
+  },
+  {
+    "id": "synth_s1_and_x_masked_001",
+    "category": "synthetic",
+    "generation": "synthetic",
+    "path": "tests/cases/synthetic/gates/and_x_masked",
+    "status": "golden",
+    "author": "agent-S1"
+  },
+  {
+    "id": "synth_s1_and_x_prop_001",
+    "category": "synthetic",
+    "generation": "synthetic",
+    "path": "tests/cases/synthetic/gates/and_x_prop",
+    "status": "golden",
+    "author": "agent-S1"
   }
 ]
