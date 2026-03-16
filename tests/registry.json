@@ -1,1 +1,10 @@
-[]
+[
+  {
+    "id": "synth_s1_and_x_prop_001",
+    "category": "synthetic",
+    "generation": "synthetic",
+    "path": "tests/cases/synthetic/gates/and_x_prop",
+    "status": "golden",
+    "author": "agent-S1"
+  }
+]
