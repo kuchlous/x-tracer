@@ -229,6 +229,35 @@ def layer4_injection_took_effect(vcd: VCDParser, injection_target: str,
     return FAIL, f"Injection target {injection_target!r} = {val!r} at t={injection_time} (expected x)"
 
 
+def layer5_single_injection(tb: Path) -> tuple[bool, str]:
+    """Layer 5: testbench injects X on exactly one signal bit.
+
+    Scans tb.v for force/assign-to-x and $deposit-to-x statements.
+    Each unique signal[bit] or scalar signal counts as one injection point.
+    Fails if more than one distinct injection point is found.
+    """
+    src = tb.read_text()
+
+    # Match: force <path> = 1'bx  OR  force <path>[N] = 1'bx
+    force_re  = re.compile(
+        r'\bforce\s+([\w.\[\]]+)\s*=\s*1\'b[xX]', re.IGNORECASE)
+    # Match: $deposit(<path>, 1'bx)  OR  $deposit(<path>[N], 1'bx)
+    deposit_re = re.compile(
+        r'\$deposit\s*\(\s*([\w.\[\]]+)\s*,\s*1\'b[xX]\s*\)', re.IGNORECASE)
+
+    targets = set()
+    for m in force_re.finditer(src):
+        targets.add(m.group(1))
+    for m in deposit_re.finditer(src):
+        targets.add(m.group(1))
+
+    if len(targets) == 0:
+        return FAIL, "No X injection found in testbench"
+    if len(targets) > 1:
+        return FAIL, f"Multiple injection points ({len(targets)}): {sorted(targets)}"
+    return PASS, f"Single injection point: {next(iter(targets))}"
+
+
 def layer6_counterfactual(netlist: Path, tb_no_inject: Path, work_dir: Path,
                            query_sig_bit: str, query_time: int,
                            injection_time: int) -> tuple[bool, str]:
@@ -340,6 +369,11 @@ def validate(testcase_dir: Path) -> bool:
     # Layer 4
     ok, msg = layer4_injection_took_effect(vcd, inj_target, inj_time)
     print(f"  Layer 4 (injection X):  {'PASS' if ok else 'FAIL'} — {msg}")
+    all_pass &= ok
+
+    # Layer 5
+    ok, msg = layer5_single_injection(tb)
+    print(f"  Layer 5 (single inj):   {'PASS' if ok else 'FAIL'} — {msg}")
     all_pass &= ok
 
     # Layer 6
