@@ -2910,5 +2910,13 @@
     "path": "tests/cases/synthetic/multibit/multibit_mux_w8_sel1",
     "status": "golden",
     "author": "agent-S3"
+  },
+  {
+    "id": "synth_s3_reduction_and_reduce_w8_propagate",
+    "category": "synthetic",
+    "generation": "synthetic",
+    "path": "tests/cases/synthetic/multibit/reduction_and_reduce_w8_propagate",
+    "status": "golden",
+    "author": "agent-S3"
   }
 ]
