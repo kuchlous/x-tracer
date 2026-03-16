@@ -40,13 +40,29 @@ cases with reconvergent fanout where multiple paths from the injection point con
 query signal. The expected answer is always the injection point; the corpus can be built and
 graded without any reference simulator.
 
+### Why synthetic tests
+
+Open-source netlists provide realistic structural complexity but offer no guarantee that
+any specific gate type, propagation scenario, or structural pattern is present. A corpus
+built only from downloaded netlists may miss entire classes of tracer bugs — for example,
+a bug in XOR X-propagation will never be caught if no ISCAS benchmark happens to exercise
+a two-input XOR with exactly one X input under the chosen stimulus.
+
+Synthetic netlists are programmatically generated to guarantee exact coverage of:
+- Every primitive gate type with every relevant combination of X and non-X inputs
+- Masking cases: AND with a 0 masking X; OR with a 1 masking X
+- Carry chains of configurable bit width (the counter example)
+- Reconvergent fanout at exact depths
+- FF chains of configurable depth
+- Mux trees with X on select vs. X on data
+
 ### Why open-source netlists
 
-Hand-authored small netlists are necessary for targeted unit testing of specific gate types
-and scenarios, but they cannot cover the structural complexity of real designs: deep
-reconvergent cones, realistic sequential depths, mixed cell libraries, and unusual but legal
-Verilog constructs. Open-source netlists from the ISCAS benchmark suite, RISC-V cores, and
-SkyWater tapeouts provide this coverage without requiring access to proprietary designs.
+Synthetic tests guarantee coverage of known scenarios but cannot cover what we don't think
+to generate. Open-source netlists from the ISCAS benchmark suite, RISC-V cores, and
+SkyWater tapeouts provide realistic structural complexity: deep reconvergent cones,
+mixed cell libraries, legal Verilog constructs, and sequential interactions that arise only
+in real designs.
 
 The ISCAS'85 benchmarks have the additional advantage that their topology is extensively
 characterized in the literature, providing confidence that the netlist structure (fanout,
@@ -220,11 +236,160 @@ categories but are not automated pipeline targets.
 
 ---
 
+## Synthetic Test Generation
+
+Synthetic netlists are programmatically generated Verilog files designed to guarantee
+exact coverage of specific X-propagation scenarios. They complement open-source netlists:
+synthetics cover known scenarios precisely; open-source netlists cover realistic complexity.
+
+### Tier S1 — Gate Primitive Cross-Product
+
+A Python generator emits one testcase per entry in the cross-product of:
+- Gate type × input arity × X-input pattern × non-X input values
+
+```python
+GATE_TYPES = ["and", "or", "nand", "nor", "xor", "xnor", "not", "buf",
+              "bufif0", "bufif1"]
+
+# For each gate type, enumerate all combinations of X/0/1 on inputs.
+# Record expected output (X or a known value) for each combination.
+for gate in GATE_TYPES:
+    for arity in gate_arities(gate):           # e.g., AND: 2,3,4-input
+        for x_mask in all_bitmasks(arity):     # which inputs are X
+            for other in non_x_combinations(arity, x_mask):  # 0/1 on non-X inputs
+                emit_gate_testcase(gate, arity, x_mask, other)
+```
+
+Each emitted testcase is a minimal Verilog module with one gate instance, one primary
+input per gate input, and one primary output. The injection is `force` on the chosen
+X input(s); the query is the gate output.
+
+**Key cases this guarantees:**
+
+| Gate | Scenario | Expected output |
+|------|----------|----------------|
+| AND | one input X, all others 1 | X |
+| AND | one input X, one other 0 | 0 (X masked) |
+| OR  | one input X, all others 0 | X |
+| OR  | one input X, one other 1 | 1 (X masked) |
+| XOR | one input X, other 0 | X |
+| XOR | one input X, other 1 | X |
+| XOR | both inputs X | X |
+| NOT | input X | X |
+| MUX | select X, both data equal | data value (X masked) |
+| MUX | select X, data differ | X |
+| MUX | select known, data input X | X or masked |
+
+The generator also emits **chain** variants: the output of one gate feeds the input of the
+next, testing that the tracer correctly traverses multi-gate combinational paths.
+
+### Tier S2 — Structural Pattern Templates
+
+Pre-written parameterised Verilog templates cover structural patterns that require more
+than a single gate:
+
+**`carry_chain.v` — N-bit ripple carry adder**
+```
+Parameters: WIDTH (default 8)
+Injection:  force carry_in[0] = 1'bx  (or force a[0][0] = 1'bx)
+Query:      sum[WIDTH-1][0]
+Purpose:    Bit-level X propagation through carry chain; tests that tracer
+            identifies carry_in[0] not sum[N-1] as root cause.
+Widths:     4, 8, 16, 32
+```
+
+**`ff_chain.v` — N-deep D flip-flop chain**
+```
+Parameters: DEPTH (default 4)
+Injection:  $deposit(ff[0].q, 1'bx)
+Query:      ff[DEPTH-1].q[0]
+Purpose:    Sequential depth; X propagates one FF per clock cycle.
+            Tests that tracer crosses DEPTH sequential boundaries.
+Depths:     1, 2, 4, 8
+```
+
+**`reconverge.v` — Diamond reconvergent fanout**
+```
+Parameters: DEPTH (default 3)
+Injection:  force src[0] = 1'bx
+Query:      merge_gate output[0]
+Purpose:    Two paths from src to merge_gate; tracer must follow both and
+            converge on the single injection point, not report intermediates.
+Depths:     2, 4, 8
+```
+
+**`mux_tree.v` — Balanced binary mux tree**
+```
+Parameters: LEVELS (default 3), X_ON (select|data)
+Injection:  force sel[level][0] = 1'bx   (X on select)
+         or force data[leaf][0] = 1'bx   (X on data input)
+Query:      root output[0]
+Purpose:    X-on-select propagates regardless of data values;
+            X-on-data may be masked by select. Tests both cases.
+Levels:     2, 3, 4
+```
+
+**`reset_chain.v` — FF with synchronous/asynchronous reset**
+```
+Parameters: RESET_TYPE (sync|async), DEPTH (default 2)
+Injection:  force rst_n[0] = 1'bx
+Query:      ff[DEPTH-1].q[0]
+Purpose:    X on reset propagates to all FF outputs; tests reset-path tracing.
+```
+
+**`bus_encoder.v` — Priority encoder with X on low-order input**
+```
+Parameters: WIDTH (default 8)
+Injection:  force in[0] = 1'bx
+Query:      out[WIDTH-1][0]
+Purpose:    X propagates through priority logic; higher-order outputs go X
+            because lower-order input is X (analogous to counter carry chain).
+Widths:     4, 8
+```
+
+### Synthetic Test Generator Implementation
+
+The generator is a standalone Python script `tests/gen_synthetic.py`:
+
+```python
+def generate_all(output_dir: Path):
+    # Tier S1: gate cross-product
+    for spec in gate_cross_product():
+        emit_gate_case(spec, output_dir / "synthetic" / "gates")
+
+    # Tier S2: structural templates
+    for template, params in STRUCTURAL_TEMPLATES:
+        for p in params:
+            emit_structural_case(template, p, output_dir / "synthetic" / "structural")
+```
+
+Generated cases go through the same validation pipeline (Layers 1–6) as all other
+testcases. `"generation": "synthetic"` is a third registry category alongside
+`"auto-pipeline"` and `"manual"`.
+
+### Synthetic Corpus Coverage Targets
+
+| Category | Generator | Count |
+|----------|-----------|-------|
+| Gate cross-product (S1) | `gen_synthetic.py` | ~200 (all gate/input/value combos) |
+| Carry chain (S2) | `carry_chain.v` × 4 widths | 4 |
+| FF chain (S2) | `ff_chain.v` × 4 depths | 4 |
+| Reconvergent fanout (S2) | `reconverge.v` × 3 depths | 3 |
+| Mux tree (S2) | `mux_tree.v` × 3 levels × 2 X targets | 6 |
+| Reset chain (S2) | `reset_chain.v` × 2 types × 2 depths | 4 |
+| Bus encoder (S2) | `bus_encoder.v` × 2 widths | 2 |
+| **Total synthetic** | | **~223** |
+
+---
+
 ## Testcase Corpus Structure
 
 ```
 tests/
 ├── cases/
+│   ├── synthetic/          # Programmatically generated (Agent E)
+│   │   ├── gates/          # Tier S1: gate cross-product
+│   │   └── structural/     # Tier S2: carry chains, FF chains, reconverge, mux trees
 │   ├── combinational/      # Automated: ISCAS'85, ITC'99 combinational (Agent A)
 │   │   ├── and_x_prop/
 │   │   ├── or_masking/
@@ -239,21 +404,21 @@ tests/
 │   │   └── multi_driver/
 │   └── stress/             # Hand-authored: large netlists, deep cones (Agent D)
 │       ├── deep_cone/
-│       ├── wide_reconvergence/
-│       └── large_synthetic/
+│       └── wide_reconvergence/
 ├── registry.json           # Merged index of all cases (append-only)
 └── schema.json             # Manifest schema (read-only)
 ```
 
-The registry distinguishes `"generation": "auto-pipeline"` from `"generation": "manual"`.
-Coverage metrics are reported separately for each category. The automated pipeline makes no
-claim about `sequential/` or `structural/` coverage.
+The registry distinguishes three generation categories: `"synthetic"`, `"auto-pipeline"`,
+and `"manual"`. Coverage metrics are reported separately per category.
 
 ### Coverage Matrix
 
 | Agent | Category | Generation | Source | Target count |
 |-------|----------|------------|--------|-------------|
-| Agent A | combinational/* | Automated | ISCAS'85 (c17, c432, c880, c2670) | 20 golden |
+| Agent E | synthetic/gates | Synthetic (S1) | `gen_synthetic.py` gate cross-product | ~200 |
+| Agent E | synthetic/structural | Synthetic (S2) | Verilog templates | ~23 |
+| Agent A | combinational/* | Auto-pipeline | ISCAS'85 (c17, c432, c880, c2670) | 20 golden |
 | Agent B | sequential/* | Hand-authored | ISCAS'89 RTL, PicoRV32, Ibex | 15 golden |
 | Agent C | structural/* | Hand-authored | ITC'99 edge cases, SkyWater, custom | 10 golden |
 | Agent D | stress/* | Hand-authored | EPFL multiplier, CVA6, PicoRV32 | 5 large |
