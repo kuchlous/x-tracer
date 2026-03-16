@@ -4950,5 +4950,13 @@
     "path": "tests/cases/synthetic/multibit/shift_reg_b4_s4",
     "status": "golden",
     "author": "agent-S3"
+  },
+  {
+    "id": "synth_s3_multibit_mux_w4_sel1_xbits1",
+    "category": "synthetic",
+    "generation": "synthetic",
+    "path": "tests/cases/synthetic/multibit/multibit_mux_w4_sel1_xbits1",
+    "status": "golden",
+    "author": "agent-S3"
   }
 ]
