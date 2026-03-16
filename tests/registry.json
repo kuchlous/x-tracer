@@ -4798,5 +4798,13 @@
     "path": "tests/cases/synthetic/multibit/reduction_xor_reduce_w8_xbits1_propagate",
     "status": "golden",
     "author": "agent-S3"
+  },
+  {
+    "id": "synth_s3_reduction_xor_reduce_w8_xbits2_propagate",
+    "category": "synthetic",
+    "generation": "synthetic",
+    "path": "tests/cases/synthetic/multibit/reduction_xor_reduce_w8_xbits2_propagate",
+    "status": "golden",
+    "author": "agent-S3"
   }
 ]
