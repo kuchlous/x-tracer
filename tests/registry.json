@@ -2998,5 +2998,13 @@
     "path": "tests/cases/synthetic/structural/reconverge_d4",
     "status": "golden",
     "author": "agent-S2"
+  },
+  {
+    "id": "synth_s2_reconverge_d8",
+    "category": "synthetic",
+    "generation": "synthetic",
+    "path": "tests/cases/synthetic/structural/reconverge_d8",
+    "status": "golden",
+    "author": "agent-S2"
   }
 ]
