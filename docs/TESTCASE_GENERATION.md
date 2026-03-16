@@ -94,68 +94,20 @@ This section defines the oracle used to grade tracer outputs against the corpus.
 definition is authoritative; no separate semantics document is required for automated
 testcases.
 
-### Cone membership
+### VCD as the oracle
 
-Static netlist traversal cannot correctly define the cone for sequential circuits. Which
-flip-flops actually capture and propagate X depends on when clock edges occur relative to
-the injection time — a fact determined by simulation, not by netlist structure alone. A
-flip-flop is in the static cone of the injection point but may never carry X because its
-capturing clock edge fired before the injection, or because its enable was low.
+Since the only source of X in any testcase is the explicitly injected X, every bit that
+is X in the VCD at or after injection time is definitively caused by the injection. The
+VCD is the oracle — no pre-computed cone membership is stored in the manifest.
 
-`cone_members` is therefore computed dynamically from the VCD after simulation, at
-**bit level**. Bus-level membership is insufficient: consider a counter where `count[0]`
-goes X first due to an X carry-in, then `count[1]` goes X one cycle later through carry
-propagation, and `count[7]` only goes X several cycles after that. Bus-level tracking
-collapses all bits of `count` to a single entry and loses the causal ordering — the tracer
-must know that `count[0]` went X first and is the root cause, not `count[7]`.
+Bit-level tracking is required. Bus-level membership is insufficient: consider a counter
+where `count[0]` goes X first due to an X carry-in, then `count[1]` goes X one cycle
+later through carry propagation, and `count[7]` only goes X several cycles after that.
+A bus-level tracer collapses all bits of `count` and loses causal ordering — the tracer
+must identify `count[0]` as the root cause, not `count[7]`.
 
-Every `(signal, bit)` pair is tracked independently:
-
-```python
-cone_members = set()
-for sig in vcd.all_signals():
-    width = vcd.get_width(sig)
-    for bit in range(width):
-        if vcd.get_first_x_time(sig, bit, after=injection_time) is not None:
-            cone_members.add(f"{sig}[{bit}]")
-```
-
-Scalars (width = 1) are represented as `sig[0]` internally. The canonical string form for
-all cone members and all tracer outputs is `signal[bit]` — e.g., `tb.dut.count[0]`,
-`tb.dut.result[3]`.
-
-This is correct for both combinational and sequential circuits:
-- **Combinational:** every bit reachable from the injected bit through combinational logic
-  will appear X in the VCD, at the correct propagation time for that bit.
-- **Sequential:** only the specific bits of FFs that actually captured X at a clock edge
-  are included — correct clock phase and enable state are enforced by the simulation.
-
-Since Layers 2 and 6 guarantee the injection is the only X source, any bit that is X in
-the VCD after injection time is definitively caused by the injection.
-
-`cone_members` is computed from the VCD post-simulation and stored in the manifest.
-
-### Timing condition
-
-For a `(signal, bit)` pair reported by the tracer at time T, the timing check is:
-
-```
-first_x_time(signal, bit) ≤ T ≤ first_x_time(signal, bit) + clock_period_ticks
-```
-
-where `first_x_time(signal, bit)` = the earliest VCD timestamp at which that specific bit
-of the signal transitions to X at or after `injection_time`.
-
-```python
-def first_x_time(vcd, signal, bit, after):
-    """Return earliest time bit `bit` of `signal` is X at or after `after`, or None."""
-    for t, value in vcd.get_transitions(signal):
-        if t < after:
-            continue
-        if get_bit(value, bit) == 'x':
-            return t
-    return None
-```
+The canonical string form for all tracer outputs is `signal[bit]` — e.g.,
+`tb.dut.count[0]`, `tb.dut.result[3]`. Scalars (width = 1) are represented as `sig[0]`.
 
 ### Grading rule
 
@@ -165,20 +117,42 @@ iff **all three** of the following hold:
 1. **Root cause reached:** the injection target `signal[bit]` is in `tracer_output` — the
    tracer traced all the way back to the injected bit, including through carry chains,
    reconvergent paths, and sequential boundaries.
-2. **Precision:** all reported `signal[bit]` entries are in `cone_members` — no fabricated
-   paths.
-3. **Focus:** `|tracer_output| ≤ 5` — the tracer returns a focused answer.
 
-The timing condition applies to the injection target entry in `tracer_output`.
+2. **Precision:** every `signal[bit]` in `tracer_output` was actually X in the VCD at or
+   after injection time — no fabricated paths. Checked live at grading time from the VCD:
+
+```python
+def grade(tracer_output, manifest, vcd):
+    injection_target = manifest["expected"]["injection_target"]  # e.g. "tb.dut.a[0]"
+    inj_time = manifest["x_injection"]["time"]
+    bits_reported = {sig_bit for sig_bit, t in tracer_output}
+
+    # Root cause: tracer must reach the injected bit
+    if injection_target not in bits_reported:
+        return FAIL, f"Did not reach injection point {injection_target!r}"
+
+    # Precision: all reported bits were X in VCD after injection — no fabricated paths
+    for sig_bit, t in tracer_output:
+        sig, bit = parse_sig_bit(sig_bit)
+        if vcd.get_first_x_time(sig, bit, after=inj_time) is None:
+            return FAIL, f"{sig_bit} was never X in VCD after injection — fabricated path"
+
+    # Focus: bounded output size
+    if len(tracer_output) > 5:
+        return FAIL, f"Too many results: {len(tracer_output)}"
+
+    return PASS, f"Reached {injection_target}"
+```
+
+3. **Focus:** `|tracer_output| ≤ 5` — the tracer returns a focused answer.
 
 ### Corpus-level vs. tracer-level separation
 
 "Golden" is a property of the testcase, not the tracer. A testcase is golden when the
-validation pipeline (Layers 1–6 below) passes and `cone_members` is computed and stored.
-Grading a tracer against the corpus is a separate step: the tracer is run against all
-golden VCDs and its outputs are checked against the stored `cone_members` sets. The corpus
-can be built and validated without ever running the tracer under test.
-
+validation pipeline (Layers 1–6 below) passes. Grading a tracer against the corpus is a
+separate step: the tracer is run against all golden VCDs and its outputs are checked
+using the grading rule above. The corpus can be built and validated without ever running
+the tracer under test.
 ---
 
 ## Open-Source Netlist Sources
@@ -549,15 +523,11 @@ Physical time is derivable from `sim_env.timescale` and is never stored directly
     "time": 80
   },
   "expected": {
-    "oracle": "cone_membership_v2",
     "injection_target": "tb.dut.a[0]",
     "injection_time": 80,
     "query_signal": "tb.dut.G49[0]",
-    "query_time": 150,
-    "cone_members": ["tb.dut.a[0]", "tb.dut.G7[0]", "tb.dut.G11[0]", "tb.dut.G49[0]"]
+    "query_time": 150
   },
-  "cone_depth": 3,
-  "sequential_depth": 1,
   "status": "golden",
   "author": "agent-A"
 }
@@ -591,43 +561,59 @@ hand-authored testbenches. They are not supported by the automated pipeline.
 
 ---
 
-## Design Metadata (required for all designs with sequential elements)
+## Probe Simulation and Injection Time
 
-Any design used in the automated pipeline that contains sequential elements must supply a
-`design_meta.json` file. Designs without this file are rejected from automated generation.
-ISCAS'85 circuits are purely combinational and exempt.
+The automated pipeline uses a **probe simulation** to determine the injection time
+`T_inject` without requiring manual reset timing metadata.
 
-```json
-{
-  "top_module": "c432",
-  "clock_port": "clk",
-  "clock_period_ticks": 10,
-  "reset": {
-    "port": "rst_n",
-    "polarity": "active_low",
-    "type": "synchronous",
-    "min_assertion_cycles": 8,
-    "requires_clock_during_assertion": true
-  },
-  "scan_ports": ["scan_en", "test_mode"],
-  "multi_clock": false
-}
+### Probe simulation flow
+
+```
+1. Compile the netlist with the generated testbench (no injection block)
+2. Run simulation up to a probe window limit (default: 4096 clock ticks)
+3. Scan the probe VCD for the latest time at which any signal is X or Z:
 ```
 
-Multi-clock designs (`multi_clock: true`) are out of scope for the automated pipeline.
-They require hand-authored testbenches. Single-clock designs must declare one `clock_port`;
-the generated testbench drives exactly that port.
+```python
+def find_injection_time(vcd: VCDDatabase) -> int | None:
+    """Return T_inject = one tick after the last X/Z in the VCD, or None if never clean."""
+    last_x_time = -1
+    for sig in vcd.all_signals():
+        for t, value in vcd.get_transitions(sig):
+            if contains_unknown(value):
+                last_x_time = max(last_x_time, t)
+    if last_x_time < 0:
+        return 0   # design was clean from the start
+    return last_x_time + 1
+```
 
-Reset polarity and type are not inferred at generation time. If the metadata is missing or
-incomplete, the design is rejected. For Tier 1 benchmarks (ISCAS'85, ITC'99 combinational),
-no reset metadata is needed as these are combinational circuits.
+If no time is found where all signals are clean (the design never fully initializes within
+the probe window), the design is rejected from the automated pipeline.
+
+```
+4. T_inject = find_injection_time(probe_vcd)
+   — If None (never clean): reject design
+5. Recompile with injection at T_inject
+6. Run injection simulation
+```
+
+The probe simulation uses a conservative testbench with 32 clock cycles of reset
+assertion and 32 cycles of post-reset settle time. If the design needs more than this to
+initialize, it must use hand-authored testbenches.
+
+For combinational designs (ISCAS'85), there is no clock or reset. The probe simulation
+applies known values to all inputs and waits `#20` ticks; `T_inject` is `#20`.
+
+Multi-clock designs are out of scope for the automated pipeline and require hand-authored
+testbenches.
 
 ---
 
 ## Clean Simulation Environment (mandatory)
 
 Before injecting X, the simulation must have zero X or Z values anywhere. This is enforced
-by Layer 2 of the validation pipeline.
+by Layer 2 of the validation pipeline. The probe simulation (see above) verifies this
+automatically — `T_inject` is set to the first time the design is fully clean.
 
 **Rule 1: All primary inputs driven with known values**
 ```verilog
@@ -636,24 +622,21 @@ initial begin
 end
 ```
 
-**Rule 2: All sequential elements initialized via reset (when reset port exists)**
+**Rule 2: All sequential elements initialized via reset**
 ```verilog
 initial begin
     rst_n = 0;
-    repeat(8) @(posedge clk);   // hold reset long enough to flush all FFs
+    repeat(32) @(posedge clk);   // conservative reset; probe sim confirms clean
     rst_n = 1;
-    repeat(16) @(posedge clk);  // settle to clean state — zero X/Z in VCD here
-    // NOW inject X
-    $deposit(top.u_alu.acc_reg, 8'bx);
+    repeat(32) @(posedge clk);   // settle; T_inject determined from probe VCD
+    // Injection fires at T_inject as determined by probe simulation
 end
 ```
-Reset assertion length and clock requirements come from `design_meta.json`.
 
 **Rule 3: Scan/test inputs held at safe values**
 
 Signals matching `/scan_en|test_mode|mbist|bist|\bse\b/i` are driven to their safe
-(functional) value (typically 0) and never treated as data inputs. A `design_meta.json`
-`scan_ports` array lists these explicitly.
+(functional) value (typically 0) and never treated as injection targets.
 
 **Rule 4:** No tristates left floating — pull all `inout` ports to a known value.
 
@@ -679,13 +662,14 @@ automated generation.
 
 ### Auto-Generate Path
 
-Parse the top-level module ports using `pyslang`, classify them using `design_meta.json`,
-emit a standard template.
+Parse the top-level module ports using `pyslang`, classify them using
+name heuristics, emit a standard template.
 
-**Port classification (from design_meta.json, not heuristics):**
+**Port classification (heuristics):**
 
-Clock and reset ports are taken from `design_meta.json`. Scan/test ports are taken from
-`scan_ports`. All remaining inputs are data inputs driven to 0.
+Clock ports: name matches `/clk|clock|ck/i`, 1-bit input. Reset ports: name matches
+`/rst|reset|rstn|rst_n/i`, 1-bit input. Scan/test ports: name matches
+`/scan_en|test_mode|mbist|bist|\\bse\\b/i`. All remaining inputs are data inputs driven to 0.
 
 **Generated testbench template:**
 ```verilog
@@ -758,52 +742,33 @@ Used to enumerate candidate injection targets for downloaded netlists.
 def scan_injection_candidates(netlist: NetlistGraph) -> list[InjectionCandidate]:
     candidates = []
     for signal in netlist.all_signals():
-        if signal in design_meta.scan_ports:  continue
-        if is_power_ground(signal):            continue  # VDD/VSS/VDDIO etc.
-        if is_clock(signal, design_meta):      continue  # forcing clk causes chaos
+        if is_clock_by_name(signal):   continue  # heuristic: /clk|clock|ck/i, 1-bit
+        if is_power_ground(signal):    continue  # VDD/VSS/VDDIO etc.
+        if is_scan_port_by_name(signal): continue  # /scan_en|test_mode|mbist|bist|\bse\b/i
 
         fanout = len(netlist.get_fanout(signal))
         if fanout == 0: continue  # X won't propagate anywhere useful
 
         candidates.append(InjectionCandidate(
             signal=signal,
-            fanout=fanout,
-            is_ff_output=netlist.get_driver(signal).type in SEQUENTIAL_TYPES,
             is_primary_input=netlist.is_primary_input(signal),
-            # cone_depth computed from VCD post-simulation, not pre-computed here
         ))
     return candidates
 ```
 
-**Selection strategy for ISCAS'85 (combinational, gate-level, primary-input injection):**
+**Clock and scan detection** uses name heuristics only — no design metadata file is
+required. A signal is excluded as a clock candidate if its name matches
+`/clk|clock|ck/i` and it is 1-bit; scan/test ports are excluded if the name matches
+`/scan_en|test_mode|mbist|bist|\bse\b/i`.
 
-The 5 injection targets per netlist are chosen to cover structurally distinct traversal
-scenarios — the hard cases for a backward-cone tracing algorithm:
+**Injection target selection:** pick 5 candidates at random from the filtered list,
+preferring primary inputs for combinational designs. Random selection produces diverse
+testcases across runs without requiring structural analysis.
 
-1. **Deepest primary input** — the primary input whose forward cone reaches the farthest
-   output in terms of gate depth; tests deep combinational traversal
-2. **Input at a reconvergent point** — a primary input whose forward cone reaches a
-   downstream gate via two or more disjoint paths; tests reconvergence handling.
-   Detected by: find nodes in the netlist whose forward cones overlap; trace back to a
-   primary input that causes the overlap.
-3. **Input crossing a module-port boundary** — a primary input that feeds a sub-module
-   port on the path to the output; tests cross-module signal-path resolution
-4. **Shallowest direct-path input** — the primary input with the shortest unmasked path
-   to any primary output (baseline combinational, minimum intermediate signals)
-5. **Randomly sampled primary input** from those not selected by criteria 1–4 (diversity)
-
-For RTL hand-authored testbenches, criterion 1 may use FF outputs (`$deposit` targets)
-in addition to primary inputs.
-
-**5 query signals per injection** are chosen to cover distinct structural positions:
-1. Immediate combinational fanout of the injection point
-2. Across the first module-port boundary from the injection point
-3. At a reconvergent merge point
-4. At maximum cone depth reachable within the simulation window
-5. At a primary output boundary
-
-All 5 must have distinct `cone_depth_class` — no two testcases from the same run share
-both injection target and cone-depth tier.
+**Query signal selection:** after the injection simulation, scan the VCD for all
+`(signal, bit)` pairs that are X after `T_inject`. Pick one at random as the query
+signal. Multiple query signals can be generated from a single injection run by picking
+different X-carrying bits.
 
 ---
 
@@ -811,24 +776,26 @@ both injection target and cone-depth tier.
 
 ```
 1. Obtain netlist (ISCAS'85 download; or synthesize from RTL for hand-authored cases)
-2. Verify design_meta.json is present and complete (skip for combinational-only designs)
-3. Freeze netlist: compute SHA-256 checksum, store in manifest
-4. Scan signal hierarchy → candidate injection targets (5 per netlist, selection above)
-5. For each injection target, select 5 structurally diverse query signals
-6. Generate testbench from template (auto-gen path) or use hand-authored testbench
-7. Record build.json: simulator version, all -D defines, library files, compilation flags
-8. Run simulation with injection → VCD
-9. Validate: Layers 1–6 (see below)
-10. Compute cone_members at bit level: scan VCD for all (signal, bit) pairs where that
-    bit transitions to X after injection_time; store as "signal[bit]" strings
-11. Compute cone_depth: count of distinct X-carrying (signal, bit) pairs on the shortest
-    VCD-observed path from injection bit to query bit; verify cone_depth ≥ 3
-12. Compute sequential_depth: number of clock-edge boundaries crossed on the path from
-    injection bit to query bit (0 for purely combinational testcases)
-13. Store manifest with cone_members, cone_depth, sequential_depth, SHA-256, sim_env,
-    timing fields; injection_target and query_signal in "signal[bit]" form
-13. Append to registry.json
+2. Freeze netlist: compute SHA-256 checksum, store in manifest
+3. Generate testbench from template (auto-gen path) or use hand-authored testbench
+4. Record build.json: simulator version, all -D defines, library files, compilation flags
+5. Run probe simulation (no injection) → probe VCD
+6. Find T_inject = first tick after last X/Z in probe VCD
+   — If design never fully cleans up within probe window: reject design
+7. Scan signal hierarchy → pick up to 5 injection targets at random (exclude clocks, power, scan)
+8. For each injection target:
+   a. Compile with injection at T_inject
+   b. Run injection simulation → sim VCD
+   c. Validate: Layers 1–6 (see below)
+   d. Scan sim VCD for all (signal, bit) pairs X after T_inject → candidate query signals
+   e. Pick one or more query signals at random from candidates
+   f. Store manifest: injection_target, injection_time, query_signal, query_time (all in
+      "signal[bit]" form), SHA-256, sim_env, timing fields
+9. Append to registry.json
 ```
+
+One probe simulation per netlist; multiple injection targets and query signals can be
+generated from the same probe result.
 
 ---
 
@@ -856,8 +823,8 @@ Every testcase must pass all layers before entering the corpus:
           — FAIL → testbench bug
 
 [Layer 5] Manifest schema lint
-          — valid injection_class, non-negative times, signal paths exist in elaborated
-            hierarchy, cone_members is non-empty, cone_depth ≥ 3, sequential_depth present
+          — non-negative times, injection_target and query_signal are valid "signal[bit]"
+            strings present in the elaborated hierarchy
           — FAIL → rejected
 
 [Layer 6] Counterfactual check: simulation without injection
@@ -907,64 +874,14 @@ undriven input. The error output lists the offending signals with suggested fixe
 A testcase is promoted to `status: "golden"` iff it passes **all** of the following:
 
 1. **Layers 1–6** of the validation pipeline pass
-2. **Cone computation succeeds:** `cone_members` is computed from the VCD at bit level and
-   is non-empty; at minimum the injected bit and the queried bit are present.
-3. **Minimum cone depth:** `cone_depth ≥ 3` — at least 2 intermediate signals exist
-   between injection target and query signal on the observed X-propagation path. Testcases
-   where injection directly drives the query with no intermediate logic are rejected (no
-   traversal exercise).
-3a. **Sequential depth recorded:** `sequential_depth` is computed and stored; testcases
-    with `sequential_depth ≥ 1` must have a valid `design_meta.json` with clock metadata.
-4. **Manifests is complete:** all required fields present and schema-valid (Layer 5)
+2. **X propagated:** at least one `(signal, bit)` pair other than the injection target is
+   X in the VCD after `T_inject` — the injection caused observable X propagation.
+3. **Manifest is complete:** all required fields present and schema-valid (Layer 5)
 
 "Golden" is a property of the testcase, established without running the tracer under test.
-The grading oracle (cone membership check) is applied separately when evaluating a tracer
-implementation against the corpus.
+The grading rule (see Tracer Evaluation Oracle above) is applied separately when evaluating
+a tracer implementation against the corpus.
 
-### Grading rule (applied during tracer evaluation, not during corpus construction)
-
-Given a tracer's output `T_out` = set of `(signal, time)` pairs for a given testcase:
-
-```python
-def grade(tracer_output, manifest, vcd):
-    """
-    tracer_output: list of ("signal[bit]", time) pairs
-    cone_members:  set of "signal[bit]" strings, computed from VCD at corpus build time
-    """
-    injection_target = manifest["expected"]["injection_target"]  # e.g. "tb.dut.a[0]"
-    cone = set(manifest["expected"]["cone_members"])
-    bits_reported = {sig_bit for sig_bit, t in tracer_output}
-
-    # Root cause: tracer must reach the injected bit.
-    # Carry chains, reconvergent fanout, and sequential boundaries must all be
-    # traversed — stopping at any intermediate bit is a tracer failure.
-    if injection_target not in bits_reported:
-        return FAIL, f"Tracer did not reach injection point {injection_target!r}"
-
-    # Precision: no bit outside the cone — no fabricated paths
-    outside = bits_reported - cone
-    if outside:
-        return FAIL, f"Bits outside cone: {outside}"
-
-    # Focus: bounded output size
-    if len(tracer_output) > 5:
-        return FAIL, f"Tracer returned {len(tracer_output)} results; maximum is 5"
-
-    # Timing: injection target must be reported at a plausible time
-    inj_time = manifest["x_injection"]["time"]
-    period = manifest["timing"]["clock_period_ticks"]
-    sig, bit = parse_sig_bit(injection_target)   # "tb.dut.a[0]" -> ("tb.dut.a", 0)
-    for reported_sig_bit, t in tracer_output:
-        if reported_sig_bit == injection_target:
-            first_x = first_x_time(vcd, sig, bit, after=inj_time)
-            if first_x is not None and abs(t - first_x) <= period:
-                return PASS, f"Correctly reached {injection_target!r} at t={t}"
-
-    return FAIL, f"Injection target {injection_target!r} reported at wrong time"
-```
-
-**Black-box cases:** For a signal at a black-box input boundary, `first_x_time` is the
-time at which that input transitioned to X. Reporting any X-carrying black-box input on
-the path from injection to query is a valid answer. The oracle accepts observability-limit
-answers; testing inferences about black-box internals is not possible without knowing
-those internals and is explicitly out of scope.
+**Black-box cases:** For a signal at a black-box input boundary, the oracle accepts
+reporting any X-carrying input on the path from injection to query. Testing inferences
+about black-box internals is explicitly out of scope.
