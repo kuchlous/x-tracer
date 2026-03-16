@@ -38,5 +38,13 @@
     "path": "tests/cases/synthetic/structural/ff_chain_depth2",
     "status": "golden",
     "author": "agent-S2"
+  },
+  {
+    "id": "synth_s2_reconverge_depth2",
+    "category": "synthetic",
+    "generation": "synthetic",
+    "path": "tests/cases/synthetic/structural/reconverge_depth2",
+    "status": "golden",
+    "author": "agent-S2"
   }
 ]
