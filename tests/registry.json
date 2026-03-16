@@ -3110,5 +3110,13 @@
     "path": "tests/cases/synthetic/structural/carry_chain_w16",
     "status": "golden",
     "author": "agent-S2"
+  },
+  {
+    "id": "synth_s2_carry_chain_w32",
+    "category": "synthetic",
+    "generation": "synthetic",
+    "path": "tests/cases/synthetic/structural/carry_chain_w32",
+    "status": "golden",
+    "author": "agent-S2"
   }
 ]
