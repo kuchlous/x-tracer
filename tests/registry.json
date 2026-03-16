@@ -3006,5 +3006,13 @@
     "path": "tests/cases/synthetic/structural/reconverge_d8",
     "status": "golden",
     "author": "agent-S2"
+  },
+  {
+    "id": "synth_s2_mux_tree_l2_xselect",
+    "category": "synthetic",
+    "generation": "synthetic",
+    "path": "tests/cases/synthetic/structural/mux_tree_l2_xselect",
+    "status": "golden",
+    "author": "agent-S2"
   }
 ]
