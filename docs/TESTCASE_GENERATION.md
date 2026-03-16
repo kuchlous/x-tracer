@@ -86,52 +86,72 @@ the injection time — a fact determined by simulation, not by netlist structure
 flip-flop is in the static cone of the injection point but may never carry X because its
 capturing clock edge fired before the injection, or because its enable was low.
 
-`cone_members` is therefore computed dynamically from the VCD after simulation:
+`cone_members` is therefore computed dynamically from the VCD after simulation, at
+**bit level**. Bus-level membership is insufficient: consider a counter where `count[0]`
+goes X first due to an X carry-in, then `count[1]` goes X one cycle later through carry
+propagation, and `count[7]` only goes X several cycles after that. Bus-level tracking
+collapses all bits of `count` to a single entry and loses the causal ordering — the tracer
+must know that `count[0]` went X first and is the root cause, not `count[7]`.
+
+Every `(signal, bit)` pair is tracked independently:
 
 ```python
-cone_members = {
-    sig
-    for sig in vcd.all_signals()
-    if vcd.get_first_x_time(sig, after=injection_time) is not None
-}
+cone_members = set()
+for sig in vcd.all_signals():
+    width = vcd.get_width(sig)
+    for bit in range(width):
+        if vcd.get_first_x_time(sig, bit, after=injection_time) is not None:
+            cone_members.add(f"{sig}[{bit}]")
 ```
 
+Scalars (width = 1) are represented as `sig[0]` internally. The canonical string form for
+all cone members and all tracer outputs is `signal[bit]` — e.g., `tb.dut.count[0]`,
+`tb.dut.result[3]`.
+
 This is correct for both combinational and sequential circuits:
-- **Combinational:** equivalent to static cone traversal — every signal reachable from the
-  injection point through combinational logic will appear X in the VCD.
-- **Sequential:** only FFs that actually captured X at a clock edge are included. FFs in
-  the static cone that never saw X (wrong clock phase, enable low, etc.) are excluded.
+- **Combinational:** every bit reachable from the injected bit through combinational logic
+  will appear X in the VCD, at the correct propagation time for that bit.
+- **Sequential:** only the specific bits of FFs that actually captured X at a clock edge
+  are included — correct clock phase and enable state are enforced by the simulation.
 
-Since Layers 2 and 6 guarantee the injection is the only X source, any signal that is X in
+Since Layers 2 and 6 guarantee the injection is the only X source, any bit that is X in
 the VCD after injection time is definitively caused by the injection.
-
-Membership is at bus-signal granularity: `foo[7:0]` and `foo[3]` are both represented as
-`foo` in `cone_members`. `cone_members` is a set of signal-name strings with no time
-dimension.
 
 `cone_members` is computed from the VCD post-simulation and stored in the manifest.
 
 ### Timing condition
 
-For a signal S reported by the tracer at time T, the timing check is:
+For a `(signal, bit)` pair reported by the tracer at time T, the timing check is:
 
 ```
-first_x_time(S) ≤ T ≤ first_x_time(S) + clock_period_ticks
+first_x_time(signal, bit) ≤ T ≤ first_x_time(signal, bit) + clock_period_ticks
 ```
 
-where `first_x_time(S)` = the earliest VCD timestamp at which S transitions to X at or
-after `injection_time`.
+where `first_x_time(signal, bit)` = the earliest VCD timestamp at which that specific bit
+of the signal transitions to X at or after `injection_time`.
+
+```python
+def first_x_time(vcd, signal, bit, after):
+    """Return earliest time bit `bit` of `signal` is X at or after `after`, or None."""
+    for t, value in vcd.get_transitions(signal):
+        if t < after:
+            continue
+        if get_bit(value, bit) == 'x':
+            return t
+    return None
+```
 
 ### Grading rule
 
-A tracer output passes a testcase iff **all three** of the following hold:
+Tracer output is a set of `(signal[bit], time)` pairs. A tracer output passes a testcase
+iff **all three** of the following hold:
 
-1. **Root cause reached:** the injection target is in `tracer_output` — the tracer traced
-   all the way back to the source, including through reconvergent paths.
-2. **Precision:** `tracer_output ⊆ cone_members` — no reported signal is outside the cone;
-   no fabricated paths.
-3. **Focus:** `|tracer_output| ≤ 5` — the tracer returns a focused answer, not a dump of
-   the entire VCD.
+1. **Root cause reached:** the injection target `signal[bit]` is in `tracer_output` — the
+   tracer traced all the way back to the injected bit, including through carry chains,
+   reconvergent paths, and sequential boundaries.
+2. **Precision:** all reported `signal[bit]` entries are in `cone_members` — no fabricated
+   paths.
+3. **Focus:** `|tracer_output| ≤ 5` — the tracer returns a focused answer.
 
 The timing condition applies to the injection target entry in `tracer_output`.
 
@@ -277,12 +297,12 @@ Physical time is derivable from `sim_env.timescale` and is never stored directly
     "time": 80
   },
   "expected": {
-    "oracle": "cone_membership_v1",
-    "injection_target": "tb.dut.a",
+    "oracle": "cone_membership_v2",
+    "injection_target": "tb.dut.a[0]",
     "injection_time": 80,
-    "query_signal": "tb.dut.G49",
+    "query_signal": "tb.dut.G49[0]",
     "query_time": 150,
-    "cone_members": ["tb.dut.a", "tb.dut.G7", "tb.dut.G11", "tb.dut.G49"]
+    "cone_members": ["tb.dut.a[0]", "tb.dut.G7[0]", "tb.dut.G11[0]", "tb.dut.G49[0]"]
   },
   "cone_depth": 3,
   "sequential_depth": 1,
@@ -547,13 +567,14 @@ both injection target and cone-depth tier.
 7. Record build.json: simulator version, all -D defines, library files, compilation flags
 8. Run simulation with injection → VCD
 9. Validate: Layers 1–6 (see below)
-10. Compute cone_members: scan VCD for all signals that become X after injection_time
-11. Compute cone_depth: count of distinct X-carrying signals between injection target and
-    query signal along the shortest VCD-observed path; verify cone_depth ≥ 3
-12. Compute sequential_depth: number of clock-edge boundaries X crossed on the path from
-    injection target to query signal (0 for purely combinational testcases)
+10. Compute cone_members at bit level: scan VCD for all (signal, bit) pairs where that
+    bit transitions to X after injection_time; store as "signal[bit]" strings
+11. Compute cone_depth: count of distinct X-carrying (signal, bit) pairs on the shortest
+    VCD-observed path from injection bit to query bit; verify cone_depth ≥ 3
+12. Compute sequential_depth: number of clock-edge boundaries crossed on the path from
+    injection bit to query bit (0 for purely combinational testcases)
 13. Store manifest with cone_members, cone_depth, sequential_depth, SHA-256, sim_env,
-    timing fields
+    timing fields; injection_target and query_signal in "signal[bit]" form
 13. Append to registry.json
 ```
 
@@ -634,8 +655,8 @@ undriven input. The error output lists the offending signals with suggested fixe
 A testcase is promoted to `status: "golden"` iff it passes **all** of the following:
 
 1. **Layers 1–6** of the validation pipeline pass
-2. **Cone computation succeeds:** `cone_members` is computed from the VCD and is non-empty
-   (at least the injection target and query signal are X after injection time).
+2. **Cone computation succeeds:** `cone_members` is computed from the VCD at bit level and
+   is non-empty; at minimum the injected bit and the queried bit are present.
 3. **Minimum cone depth:** `cone_depth ≥ 3` — at least 2 intermediate signals exist
    between injection target and query signal on the observed X-propagation path. Testcases
    where injection directly drives the query with no intermediate logic are rejected (no
@@ -653,20 +674,25 @@ implementation against the corpus.
 Given a tracer's output `T_out` = set of `(signal, time)` pairs for a given testcase:
 
 ```python
-def grade(tracer_output, manifest):
-    injection_target = manifest["x_injection"]["target"]
+def grade(tracer_output, manifest, vcd):
+    """
+    tracer_output: list of ("signal[bit]", time) pairs
+    cone_members:  set of "signal[bit]" strings, computed from VCD at corpus build time
+    """
+    injection_target = manifest["expected"]["injection_target"]  # e.g. "tb.dut.a[0]"
     cone = set(manifest["expected"]["cone_members"])
-    signals_reported = {sig for sig, t in tracer_output}
+    bits_reported = {sig_bit for sig_bit, t in tracer_output}
 
-    # Root cause: tracer must reach the injection point
-    # This applies equally to direct paths and reconvergent fanout — all paths
-    # lead back to the same injection point, so the tracer must find it.
-    if injection_target not in signals_reported:
+    # Root cause: tracer must reach the injected bit.
+    # Carry chains, reconvergent fanout, and sequential boundaries must all be
+    # traversed — stopping at any intermediate bit is a tracer failure.
+    if injection_target not in bits_reported:
         return FAIL, f"Tracer did not reach injection point {injection_target!r}"
 
-    # Precision: no signal outside the cone — no fabricated paths
-    if not signals_reported.issubset(cone):
-        return FAIL, f"Signals outside cone: {signals_reported - cone}"
+    # Precision: no bit outside the cone — no fabricated paths
+    outside = bits_reported - cone
+    if outside:
+        return FAIL, f"Bits outside cone: {outside}"
 
     # Focus: bounded output size
     if len(tracer_output) > 5:
@@ -675,11 +701,12 @@ def grade(tracer_output, manifest):
     # Timing: injection target must be reported at a plausible time
     inj_time = manifest["x_injection"]["time"]
     period = manifest["timing"]["clock_period_ticks"]
-    for sig, t in tracer_output:
-        if sig == injection_target:
-            first_x = vcd.get_first_x_time(sig, after=inj_time)
+    sig, bit = parse_sig_bit(injection_target)   # "tb.dut.a[0]" -> ("tb.dut.a", 0)
+    for reported_sig_bit, t in tracer_output:
+        if reported_sig_bit == injection_target:
+            first_x = first_x_time(vcd, sig, bit, after=inj_time)
             if first_x is not None and abs(t - first_x) <= period:
-                return PASS, f"Correctly reached injection target {injection_target!r} at t={t}"
+                return PASS, f"Correctly reached {injection_target!r} at t={t}"
 
     return FAIL, f"Injection target {injection_target!r} reported at wrong time"
 ```
