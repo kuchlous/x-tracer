@@ -3030,5 +3030,13 @@
     "path": "tests/cases/synthetic/structural/mux_tree_l3_xselect",
     "status": "golden",
     "author": "agent-S2"
+  },
+  {
+    "id": "synth_s2_mux_tree_l3_xdata",
+    "category": "synthetic",
+    "generation": "synthetic",
+    "path": "tests/cases/synthetic/structural/mux_tree_l3_xdata",
+    "status": "golden",
+    "author": "agent-S2"
   }
 ]
