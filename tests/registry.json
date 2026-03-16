@@ -14,5 +14,13 @@
     "path": "tests/cases/synthetic/gates/and_x_masked",
     "status": "golden",
     "author": "agent-S1"
+  },
+  {
+    "id": "synth_s3_partial_bus_and_4bit_001",
+    "category": "synthetic",
+    "generation": "synthetic",
+    "path": "tests/cases/synthetic/multibit/partial_bus_and_4bit",
+    "status": "golden",
+    "author": "agent-S3"
   }
 ]
