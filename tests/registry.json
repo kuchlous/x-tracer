@@ -2158,5 +2158,13 @@
     "path": "tests/cases/synthetic/gates/synth_s1_nor_2in_xmask10_0",
     "status": "golden",
     "author": "agent-S1"
+  },
+  {
+    "id": "synth_s1_nor_2in_xmask10_1",
+    "category": "synthetic",
+    "generation": "synthetic",
+    "path": "tests/cases/synthetic/gates/synth_s1_nor_2in_xmask10_1",
+    "status": "golden",
+    "author": "agent-S1"
   }
 ]
