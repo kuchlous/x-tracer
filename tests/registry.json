@@ -6,5 +6,13 @@
     "path": "tests/cases/synthetic/gates/and_x_prop",
     "status": "golden",
     "author": "agent-S1"
+  },
+  {
+    "id": "synth_s1_and_x_masked_001",
+    "category": "synthetic",
+    "generation": "synthetic",
+    "path": "tests/cases/synthetic/gates/and_x_masked",
+    "status": "golden",
+    "author": "agent-S1"
   }
 ]
