@@ -4622,5 +4622,13 @@
     "path": "tests/cases/synthetic/multibit/partial_bus_xor_w16_xbits8",
     "status": "golden",
     "author": "agent-S3"
+  },
+  {
+    "id": "synth_s3_bit_slice_w8_b4_part_select",
+    "category": "synthetic",
+    "generation": "synthetic",
+    "path": "tests/cases/synthetic/multibit/bit_slice_w8_b4_part_select",
+    "status": "golden",
+    "author": "agent-S3"
   }
 ]
