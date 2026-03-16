@@ -4350,5 +4350,13 @@
     "path": "tests/cases/synthetic/gates/synth_s1_nand_chain2_b1c1",
     "status": "golden",
     "author": "agent-S1"
+  },
+  {
+    "id": "synth_s1_nor_chain2_b0c0",
+    "category": "synthetic",
+    "generation": "synthetic",
+    "path": "tests/cases/synthetic/gates/synth_s1_nor_chain2_b0c0",
+    "status": "golden",
+    "author": "agent-S1"
   }
 ]
