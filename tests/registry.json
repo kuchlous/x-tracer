@@ -30,5 +30,13 @@
     "path": "tests/cases/synthetic/multibit/reg4_bit1_inject",
     "status": "golden",
     "author": "agent-S3"
+  },
+  {
+    "id": "synth_s2_ff_chain_depth2",
+    "category": "synthetic",
+    "generation": "synthetic",
+    "path": "tests/cases/synthetic/structural/ff_chain_depth2",
+    "status": "golden",
+    "author": "agent-S2"
   }
 ]
