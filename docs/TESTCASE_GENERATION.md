@@ -347,20 +347,99 @@ Purpose:    X propagates through priority logic; higher-order outputs go X
 Widths:     4, 8
 ```
 
+### Tier S3 — Multi-Bit Tests
+
+Tiers S1 and S2 exercise single-bit injection and single-bit queries. Tier S3 exercises
+the cases that only arise with buses: partial injection (some bits X, others known),
+independent bit propagation through wide logic, and cross-bit effects (carry, shift,
+reduction). These are the cases where a bus-level tracer silently gives wrong answers
+while a bit-level tracer is required to give correct ones.
+
+**`partial_bus_gate.v` — N-bit gate array with partial X injection**
+```
+Parameters: GATE_TYPE, WIDTH (4,8,16), X_BITS (which bits of input_a are X)
+Injection:  force input_a[K] = 1'bx for each K in X_BITS; all other bits known
+Query:      output[K][0] for each injected bit; output[K'][0] for a non-injected bit
+Purpose:    Tracer must find input_a[K] for the X query, and must NOT report
+            input_a[K] for the non-X query. Tests per-bit isolation.
+Example:    8-bit AND, inject X on bits [2:0] only.
+            output[0] is X → root cause is input_a[0].
+            output[7] is 0 (masked or no X) → tracer should not reach input_a[0].
+```
+
+**`bit_slice.v` — Bit-select and part-select through logic**
+```
+Parameters: WIDTH (8,16), INJECT_BIT, QUERY_BIT, SLICE_OP (select|concat|replicate)
+Injection:  force bus[INJECT_BIT] = 1'bx
+Query:      output[QUERY_BIT][0]
+Purpose:    Test that tracer follows bit-select operations correctly.
+            e.g., out = {a[6], a[4], a[2], a[0]} — inject a[2], query out[1].
+            Tracer must find a[2], not a[6] or a[0].
+```
+
+**`multibit_mux.v` — N-bit MUX with partial X on data input**
+```
+Parameters: WIDTH (4,8), INJECT_BITS (subset of [WIDTH-1:0]), SEL_VALUE (0|1)
+Injection:  force data_a[K] = 1'bx for K in INJECT_BITS; sel driven to SEL_VALUE
+Query:      out[K][0] for injected bit; out[K'][0] for non-injected bit
+Purpose:    With sel known, only injected bits of the selected data input
+            propagate to output. Tracer must identify the specific injected bit,
+            not the entire data_a bus.
+```
+
+**`shift_reg.v` — N-bit shift register with bit-level X injection**
+```
+Parameters: WIDTH (8), INJECT_BIT, SHIFT_AMOUNT (1,2,4)
+Injection:  force shift_reg[INJECT_BIT] = 1'bx at cycle 0
+Query:      shift_reg[(INJECT_BIT + SHIFT_AMOUNT) % WIDTH][0] after SHIFT_AMOUNT cycles
+Purpose:    X on bit K shifts to bit K+N after N clock cycles. Tracer must
+            trace back through SHIFT_AMOUNT sequential boundaries and identify
+            the original bit as root cause.
+Widths × shifts: 8-bit × {1,2,4} = 3 cases
+```
+
+**`reduction.v` — Bitwise reduction with partial X**
+```
+Parameters: OP (and|or|xor), WIDTH (8), INJECT_BITS, OTHER_BIT_VALUE (0|1)
+Injection:  force bus[K] = 1'bx for K in INJECT_BITS
+Query:      reduced_out[0]
+Purpose:    AND-reduction with one X bit and all others 1 → output X.
+            AND-reduction with one X bit and one 0 → output 0 (X masked).
+            OR-reduction with one X bit and one 1 → output 1 (X masked).
+            Tracer must identify the injected bit, not the entire bus.
+            Masking variants must not reach the injected bit (no X at output).
+```
+
+**`bit_interleave.v` — Bit reordering and concatenation across sources**
+```
+Parameters: WIDTH (8), INJECT_SRC (a|b), INJECT_BIT
+Injection:  force src_a[INJECT_BIT] = 1'bx  (or src_b)
+Query:      interleaved output bit corresponding to injected bit
+            e.g., out = {a[3],b[3],a[2],b[2],a[1],b[1],a[0],b[0]}
+            inject a[2] → query out[5]
+Purpose:    Tracer must follow bit reordering; must not confuse a[2] with b[2]
+            or a[3] even though all appear in the same output bus.
+```
+
 ### Synthetic Test Generator Implementation
 
 The generator is a standalone Python script `tests/gen_synthetic.py`:
 
 ```python
 def generate_all(output_dir: Path):
-    # Tier S1: gate cross-product
+    # Tier S1: gate cross-product (single-bit)
     for spec in gate_cross_product():
         emit_gate_case(spec, output_dir / "synthetic" / "gates")
 
-    # Tier S2: structural templates
+    # Tier S2: structural templates (single-bit injection, structural complexity)
     for template, params in STRUCTURAL_TEMPLATES:
         for p in params:
             emit_structural_case(template, p, output_dir / "synthetic" / "structural")
+
+    # Tier S3: multi-bit bus tests
+    for template, params in MULTIBIT_TEMPLATES:
+        for p in params:
+            emit_multibit_case(template, p, output_dir / "synthetic" / "multibit")
 ```
 
 Generated cases go through the same validation pipeline (Layers 1–6) as all other
@@ -371,14 +450,20 @@ testcases. `"generation": "synthetic"` is a third registry category alongside
 
 | Category | Generator | Count |
 |----------|-----------|-------|
-| Gate cross-product (S1) | `gen_synthetic.py` | ~200 (all gate/input/value combos) |
+| Gate cross-product (S1) | `gen_synthetic.py` | ~200 |
 | Carry chain (S2) | `carry_chain.v` × 4 widths | 4 |
 | FF chain (S2) | `ff_chain.v` × 4 depths | 4 |
 | Reconvergent fanout (S2) | `reconverge.v` × 3 depths | 3 |
 | Mux tree (S2) | `mux_tree.v` × 3 levels × 2 X targets | 6 |
 | Reset chain (S2) | `reset_chain.v` × 2 types × 2 depths | 4 |
 | Bus encoder (S2) | `bus_encoder.v` × 2 widths | 2 |
-| **Total synthetic** | | **~223** |
+| Partial bus gate (S3) | `partial_bus_gate.v` × 3 gate types × 3 widths × inject patterns | ~30 |
+| Bit slice (S3) | `bit_slice.v` × 3 ops × 2 widths | 6 |
+| Multi-bit MUX (S3) | `multibit_mux.v` × 2 widths × inject patterns | ~10 |
+| Shift register (S3) | `shift_reg.v` × 3 shift amounts | 3 |
+| Reduction (S3) | `reduction.v` × 3 ops × masking/non-masking | ~12 |
+| Bit interleave (S3) | `bit_interleave.v` × 2 sources × 4 bits | 8 |
+| **Total synthetic** | | **~292** |
 
 ---
 
@@ -388,8 +473,9 @@ testcases. `"generation": "synthetic"` is a third registry category alongside
 tests/
 ├── cases/
 │   ├── synthetic/          # Programmatically generated (Agent E)
-│   │   ├── gates/          # Tier S1: gate cross-product
-│   │   └── structural/     # Tier S2: carry chains, FF chains, reconverge, mux trees
+│   │   ├── gates/          # Tier S1: gate cross-product (single-bit)
+│   │   ├── structural/     # Tier S2: carry chains, FF chains, reconverge, mux trees
+│   │   └── multibit/       # Tier S3: partial bus, bit-slice, shift, reduction, interleave
 │   ├── combinational/      # Automated: ISCAS'85, ITC'99 combinational (Agent A)
 │   │   ├── and_x_prop/
 │   │   ├── or_masking/
@@ -418,6 +504,7 @@ and `"manual"`. Coverage metrics are reported separately per category.
 |-------|----------|------------|--------|-------------|
 | Agent E | synthetic/gates | Synthetic (S1) | `gen_synthetic.py` gate cross-product | ~200 |
 | Agent E | synthetic/structural | Synthetic (S2) | Verilog templates | ~23 |
+| Agent E | synthetic/multibit | Synthetic (S3) | Multi-bit Verilog templates | ~69 |
 | Agent A | combinational/* | Auto-pipeline | ISCAS'85 (c17, c432, c880, c2670) | 20 golden |
 | Agent B | sequential/* | Hand-authored | ISCAS'89 RTL, PicoRV32, Ibex | 15 golden |
 | Agent C | structural/* | Hand-authored | ITC'99 edge cases, SkyWater, custom | 10 golden |
