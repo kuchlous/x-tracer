@@ -4878,5 +4878,13 @@
     "path": "tests/cases/synthetic/gates/synth_s1_bufif1_2in_xmask11_na",
     "status": "golden",
     "author": "agent-S1"
+  },
+  {
+    "id": "synth_s3_shift_reg_b0_s1",
+    "category": "synthetic",
+    "generation": "synthetic",
+    "path": "tests/cases/synthetic/multibit/shift_reg_b0_s1",
+    "status": "golden",
+    "author": "agent-S3"
   }
 ]
