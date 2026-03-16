@@ -3702,5 +3702,13 @@
     "path": "tests/cases/synthetic/gates/synth_s1_xnor_3in_xmask001_00",
     "status": "golden",
     "author": "agent-S1"
+  },
+  {
+    "id": "synth_s1_xnor_3in_xmask001_01",
+    "category": "synthetic",
+    "generation": "synthetic",
+    "path": "tests/cases/synthetic/gates/synth_s1_xnor_3in_xmask001_01",
+    "status": "golden",
+    "author": "agent-S1"
   }
 ]
