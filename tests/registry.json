@@ -1822,5 +1822,13 @@
     "path": "tests/cases/synthetic/gates/synth_s1_nand_4in_xmask0010_011",
     "status": "golden",
     "author": "agent-S1"
+  },
+  {
+    "id": "synth_s1_nand_4in_xmask0010_100",
+    "category": "synthetic",
+    "generation": "synthetic",
+    "path": "tests/cases/synthetic/gates/synth_s1_nand_4in_xmask0010_100",
+    "status": "golden",
+    "author": "agent-S1"
   }
 ]
