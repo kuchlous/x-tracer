@@ -4822,5 +4822,13 @@
     "path": "tests/cases/synthetic/multibit/bit_interleave_srca_b2",
     "status": "golden",
     "author": "agent-S3"
+  },
+  {
+    "id": "synth_s3_bit_interleave_srcb_b0",
+    "category": "synthetic",
+    "generation": "synthetic",
+    "path": "tests/cases/synthetic/multibit/bit_interleave_srcb_b0",
+    "status": "golden",
+    "author": "agent-S3"
   }
 ]
