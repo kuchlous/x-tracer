@@ -3086,5 +3086,13 @@
     "path": "tests/cases/synthetic/structural/reset_chain_async_d4",
     "status": "golden",
     "author": "agent-S2"
+  },
+  {
+    "id": "synth_s2_carry_chain_w4",
+    "category": "synthetic",
+    "generation": "synthetic",
+    "path": "tests/cases/synthetic/structural/carry_chain_w4",
+    "status": "golden",
+    "author": "agent-S2"
   }
 ]
