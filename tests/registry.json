@@ -4534,5 +4534,13 @@
     "path": "tests/cases/synthetic/multibit/partial_bus_or_w8_xbits4",
     "status": "golden",
     "author": "agent-S3"
+  },
+  {
+    "id": "synth_s3_partial_bus_or_w16_xbits1",
+    "category": "synthetic",
+    "generation": "synthetic",
+    "path": "tests/cases/synthetic/multibit/partial_bus_or_w16_xbits1",
+    "status": "golden",
+    "author": "agent-S3"
   }
 ]
