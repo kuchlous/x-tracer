@@ -2966,5 +2966,13 @@
     "path": "tests/cases/synthetic/structural/ff_chain_d2",
     "status": "golden",
     "author": "agent-S2"
+  },
+  {
+    "id": "synth_s2_ff_chain_d4",
+    "category": "synthetic",
+    "generation": "synthetic",
+    "path": "tests/cases/synthetic/structural/ff_chain_d4",
+    "status": "golden",
+    "author": "agent-S2"
   }
 ]
