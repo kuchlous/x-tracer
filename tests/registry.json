@@ -2806,5 +2806,13 @@
     "path": "tests/cases/synthetic/multibit/multibit_mux_w8_sel1_xbits1",
     "status": "golden",
     "author": "agent-S3"
+  },
+  {
+    "id": "synth_s3_partial_bus_and_w4",
+    "category": "synthetic",
+    "generation": "synthetic",
+    "path": "tests/cases/synthetic/multibit/partial_bus_and_w4",
+    "status": "golden",
+    "author": "agent-S3"
   }
 ]
