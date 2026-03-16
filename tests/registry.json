@@ -4734,5 +4734,13 @@
     "path": "tests/cases/synthetic/multibit/multibit_mux_w8_sel0_xbits1",
     "status": "golden",
     "author": "agent-S3"
+  },
+  {
+    "id": "synth_s3_multibit_mux_w8_sel0_xbits2",
+    "category": "synthetic",
+    "generation": "synthetic",
+    "path": "tests/cases/synthetic/multibit/multibit_mux_w8_sel0_xbits2",
+    "status": "golden",
+    "author": "agent-S3"
   }
 ]
