@@ -4902,5 +4902,13 @@
     "path": "tests/cases/synthetic/multibit/shift_reg_b0_s4",
     "status": "golden",
     "author": "agent-S3"
+  },
+  {
+    "id": "synth_s3_shift_reg_b2_s1",
+    "category": "synthetic",
+    "generation": "synthetic",
+    "path": "tests/cases/synthetic/multibit/shift_reg_b2_s1",
+    "status": "golden",
+    "author": "agent-S3"
   }
 ]
