@@ -902,5 +902,13 @@
     "path": "tests/cases/synthetic/gates/synth_s1_or_3in_xmask011_0",
     "status": "golden",
     "author": "agent-S1"
+  },
+  {
+    "id": "synth_s1_or_3in_xmask011_1",
+    "category": "synthetic",
+    "generation": "synthetic",
+    "path": "tests/cases/synthetic/gates/synth_s1_or_3in_xmask011_1",
+    "status": "golden",
+    "author": "agent-S1"
   }
 ]
