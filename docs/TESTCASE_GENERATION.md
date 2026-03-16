@@ -80,22 +80,36 @@ testcases.
 
 ### Cone membership
 
-For a testcase with injection target `I` and query signal `Q`:
+Static netlist traversal cannot correctly define the cone for sequential circuits. Which
+flip-flops actually capture and propagate X depends on when clock edges occur relative to
+the injection time — a fact determined by simulation, not by netlist structure alone. A
+flip-flop is in the static cone of the injection point but may never carry X because its
+capturing clock edge fired before the injection, or because its enable was low.
 
-```
-cone_members = {S : I →* S in the static netlist graph AND S →* Q in the static netlist graph}
+`cone_members` is therefore computed dynamically from the VCD after simulation:
+
+```python
+cone_members = {
+    sig
+    for sig in vcd.all_signals()
+    if vcd.get_first_x_time(sig, after=injection_time) is not None
+}
 ```
 
-Where `→*` means "can reach via directed edges in the gate-level netlist" (combinational
-data edges, FF Q→D edges through capture, and module port crossings). Both `I` and `Q` are
-included in `cone_members`.
+This is correct for both combinational and sequential circuits:
+- **Combinational:** equivalent to static cone traversal — every signal reachable from the
+  injection point through combinational logic will appear X in the VCD.
+- **Sequential:** only FFs that actually captured X at a clock edge are included. FFs in
+  the static cone that never saw X (wrong clock phase, enable low, etc.) are excluded.
+
+Since Layers 2 and 6 guarantee the injection is the only X source, any signal that is X in
+the VCD after injection time is definitively caused by the injection.
 
 Membership is at bus-signal granularity: `foo[7:0]` and `foo[3]` are both represented as
-`foo` in `cone_members`. There is no time dimension in the set; `cone_members` is a set of
-signal-name strings.
+`foo` in `cone_members`. `cone_members` is a set of signal-name strings with no time
+dimension.
 
-`cone_members` is pre-computed from the frozen netlist at testcase generation time and
-stored in the manifest.
+`cone_members` is computed from the VCD post-simulation and stored in the manifest.
 
 ### Timing condition
 
@@ -271,6 +285,7 @@ Physical time is derivable from `sim_env.timescale` and is never stored directly
     "cone_members": ["tb.dut.a", "tb.dut.G7", "tb.dut.G11", "tb.dut.G49"]
   },
   "cone_depth": 3,
+  "sequential_depth": 1,
   "status": "golden",
   "author": "agent-A"
 }
@@ -483,7 +498,7 @@ def scan_injection_candidates(netlist: NetlistGraph) -> list[InjectionCandidate]
             fanout=fanout,
             is_ff_output=netlist.get_driver(signal).type in SEQUENTIAL_TYPES,
             is_primary_input=netlist.is_primary_input(signal),
-            cone_depth_to_output=netlist.shortest_path_to_any_output(signal),
+            # cone_depth computed from VCD post-simulation, not pre-computed here
         ))
     return candidates
 ```
@@ -532,9 +547,13 @@ both injection target and cone-depth tier.
 7. Record build.json: simulator version, all -D defines, library files, compilation flags
 8. Run simulation with injection → VCD
 9. Validate: Layers 1–6 (see below)
-10. Compute cone_members: static netlist analysis, signal-level granularity
-11. Verify cone_depth ≥ 3 (injection target + ≥2 intermediate signals + query signal)
-12. Store manifest with cone_members, cone_depth, SHA-256, sim_env, timing fields
+10. Compute cone_members: scan VCD for all signals that become X after injection_time
+11. Compute cone_depth: count of distinct X-carrying signals between injection target and
+    query signal along the shortest VCD-observed path; verify cone_depth ≥ 3
+12. Compute sequential_depth: number of clock-edge boundaries X crossed on the path from
+    injection target to query signal (0 for purely combinational testcases)
+13. Store manifest with cone_members, cone_depth, sequential_depth, SHA-256, sim_env,
+    timing fields
 13. Append to registry.json
 ```
 
@@ -565,7 +584,7 @@ Every testcase must pass all layers before entering the corpus:
 
 [Layer 5] Manifest schema lint
           — valid injection_class, non-negative times, signal paths exist in elaborated
-            hierarchy, cone_members is non-empty, cone_depth ≥ 3
+            hierarchy, cone_members is non-empty, cone_depth ≥ 3, sequential_depth present
           — FAIL → rejected
 
 [Layer 6] Counterfactual check: simulation without injection
@@ -615,12 +634,14 @@ undriven input. The error output lists the offending signals with suggested fixe
 A testcase is promoted to `status: "golden"` iff it passes **all** of the following:
 
 1. **Layers 1–6** of the validation pipeline pass
-2. **Cone pre-computation succeeds:** `cone_members` is computed from the static netlist
-   graph and is non-empty
-3. **Minimum cone depth:** `cone_depth ≥ 3` — the cone contains the injection target,
-   at least 2 intermediate signals, and the query signal. Testcases where injection
-   directly drives the query with no intermediate logic are rejected (no traversal
-   exercise).
+2. **Cone computation succeeds:** `cone_members` is computed from the VCD and is non-empty
+   (at least the injection target and query signal are X after injection time).
+3. **Minimum cone depth:** `cone_depth ≥ 3` — at least 2 intermediate signals exist
+   between injection target and query signal on the observed X-propagation path. Testcases
+   where injection directly drives the query with no intermediate logic are rejected (no
+   traversal exercise).
+3a. **Sequential depth recorded:** `sequential_depth` is computed and stored; testcases
+    with `sequential_depth ≥ 1` must have a valid `design_meta.json` with clock metadata.
 4. **Manifests is complete:** all required fields present and schema-valid (Layer 5)
 
 "Golden" is a property of the testcase, established without running the tracer under test.
