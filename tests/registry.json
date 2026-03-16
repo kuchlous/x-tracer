@@ -4686,5 +4686,13 @@
     "path": "tests/cases/synthetic/multibit/bit_slice_w16_b4_concat",
     "status": "golden",
     "author": "agent-S3"
+  },
+  {
+    "id": "synth_s3_bit_slice_w16_b8_select",
+    "category": "synthetic",
+    "generation": "synthetic",
+    "path": "tests/cases/synthetic/multibit/bit_slice_w16_b8_select",
+    "status": "golden",
+    "author": "agent-S3"
   }
 ]
