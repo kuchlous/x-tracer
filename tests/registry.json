@@ -3262,5 +3262,13 @@
     "path": "tests/cases/synthetic/gates/synth_s1_xor_4in_xmask0010_101",
     "status": "golden",
     "author": "agent-S1"
+  },
+  {
+    "id": "synth_s1_xor_4in_xmask0010_110",
+    "category": "synthetic",
+    "generation": "synthetic",
+    "path": "tests/cases/synthetic/gates/synth_s1_xor_4in_xmask0010_110",
+    "status": "golden",
+    "author": "agent-S1"
   }
 ]
