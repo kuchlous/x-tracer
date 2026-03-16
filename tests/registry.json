@@ -2982,5 +2982,13 @@
     "path": "tests/cases/synthetic/structural/ff_chain_d8",
     "status": "golden",
     "author": "agent-S2"
+  },
+  {
+    "id": "synth_s2_reconverge_d2",
+    "category": "synthetic",
+    "generation": "synthetic",
+    "path": "tests/cases/synthetic/structural/reconverge_d2",
+    "status": "golden",
+    "author": "agent-S2"
   }
 ]
