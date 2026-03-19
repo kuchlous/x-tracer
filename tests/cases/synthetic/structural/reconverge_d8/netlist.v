@@ -1,0 +1,36 @@
+`timescale 1ns/1ps
+module reconverge(output out, input src);
+  wire a0;
+  wire a1;
+  wire a2;
+  wire a3;
+  wire a4;
+  wire a5;
+  wire a6;
+  wire a7;
+  wire b0;
+  wire b1;
+  wire b2;
+  wire b3;
+  wire b4;
+  wire b5;
+  wire b6;
+  wire b7;
+  buf ga0(a0, src);
+  buf ga1(a1, a0);
+  buf ga2(a2, a1);
+  buf ga3(a3, a2);
+  buf ga4(a4, a3);
+  buf ga5(a5, a4);
+  buf ga6(a6, a5);
+  buf ga7(a7, a6);
+  buf gb0(b0, src);
+  buf gb1(b1, b0);
+  buf gb2(b2, b1);
+  buf gb3(b3, b2);
+  buf gb4(b4, b3);
+  buf gb5(b5, b4);
+  buf gb6(b6, b5);
+  buf gb7(b7, b6);
+  and merge_gate(out, a7, b7);
+endmodule

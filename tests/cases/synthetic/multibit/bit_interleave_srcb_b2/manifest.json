@@ -1,0 +1,43 @@
+{
+  "id": "synth_s3_bit_interleave_srcb_b2",
+  "category": "synthetic",
+  "generation": "synthetic",
+  "netlist": {
+    "file": "netlist.v",
+    "sha256": "88cff99c3f68e884b30e0f0a3cbbce4a98123756e19b2d5266332aae96363e84",
+    "level": "gate"
+  },
+  "vcd": "sim.vcd",
+  "no_inject_vcd": "sim_no_inject.vcd",
+  "testbench": "tb.v",
+  "sim_env": {
+    "simulator": "iverilog",
+    "version": "12.0",
+    "timescale": "1ns/1ps"
+  },
+  "timing": {
+    "clock_period_ticks": null,
+    "clock_edge": null
+  },
+  "query": {
+    "signal": "tb.dut.out[4]",
+    "time": 30000
+  },
+  "x_injection": {
+    "method": "force",
+    "target": "tb.dut.b[2]",
+    "value": "1'bx",
+    "time": 10000,
+    "injection_class": "primary_input"
+  },
+  "expected": {
+    "injection_target": "tb.dut.b[2]",
+    "injection_time": 10000,
+    "query_signal": "tb.dut.out[4]",
+    "query_time": 30000,
+    "injection_class": "primary_input",
+    "max_output": 2
+  },
+  "status": "golden",
+  "author": "agent-S3"
+}

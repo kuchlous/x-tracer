@@ -1,0 +1,43 @@
+{
+  "id": "synth_s1_or_3in_xmask100_01",
+  "category": "synthetic",
+  "generation": "synthetic",
+  "netlist": {
+    "file": "netlist.v",
+    "sha256": "89dab657f6800b52891886b992371c8cfb4ec310c5d257b0cc1a1e57b5ec19b2",
+    "level": "gate"
+  },
+  "vcd": "sim.vcd",
+  "no_inject_vcd": "sim_no_inject.vcd",
+  "testbench": "tb.v",
+  "sim_env": {
+    "simulator": "iverilog",
+    "version": "12.0",
+    "timescale": "1ns/1ps"
+  },
+  "timing": {
+    "clock_period_ticks": null,
+    "clock_edge": null
+  },
+  "query": {
+    "signal": "tb.dut.a[0]",
+    "time": 30000
+  },
+  "x_injection": {
+    "method": "force",
+    "target": "tb.dut.a[0]",
+    "value": "1'bx",
+    "time": 10000,
+    "injection_class": "primary_input"
+  },
+  "expected": {
+    "injection_target": "tb.dut.a[0]",
+    "injection_time": 10000,
+    "query_signal": "tb.dut.a[0]",
+    "query_time": 30000,
+    "injection_class": "primary_input",
+    "max_output": 2
+  },
+  "status": "golden",
+  "author": "agent-S1"
+}

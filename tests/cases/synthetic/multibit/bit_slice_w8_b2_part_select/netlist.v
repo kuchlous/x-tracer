@@ -1,0 +1,7 @@
+`timescale 1ns/1ps
+module bit_slice_dut (
+    input  [7:0] bus,
+    output [1:0] out
+);
+  assign out = bus[3:2];
+endmodule

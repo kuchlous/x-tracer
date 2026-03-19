@@ -1,0 +1,43 @@
+{
+  "id": "synth_s3_reduction_xor_reduce_w8_propagate",
+  "category": "synthetic",
+  "generation": "synthetic",
+  "netlist": {
+    "file": "netlist.v",
+    "sha256": "441e07fb44fd3df641efba6896d16014f331e05051a52b5f3587194e09ff7972",
+    "level": "gate"
+  },
+  "vcd": "sim.vcd",
+  "no_inject_vcd": "sim_no_inject.vcd",
+  "testbench": "tb.v",
+  "sim_env": {
+    "simulator": "iverilog",
+    "version": "12.0",
+    "timescale": "1ns/1ps"
+  },
+  "timing": {
+    "clock_period_ticks": null,
+    "clock_edge": null
+  },
+  "query": {
+    "signal": "tb.dut.reduced_out[0]",
+    "time": 30000
+  },
+  "x_injection": {
+    "method": "force",
+    "target": "tb.dut.bus[0]",
+    "value": "1'bx",
+    "time": 10000,
+    "injection_class": "primary_input"
+  },
+  "expected": {
+    "injection_target": "tb.dut.bus[0]",
+    "injection_time": 10000,
+    "query_signal": "tb.dut.reduced_out[0]",
+    "query_time": 30000,
+    "injection_class": "primary_input",
+    "max_output": 2
+  },
+  "status": "golden",
+  "author": "agent-S3"
+}

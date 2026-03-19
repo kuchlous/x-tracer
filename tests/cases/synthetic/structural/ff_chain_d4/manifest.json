@@ -1,0 +1,43 @@
+{
+  "id": "synth_s2_ff_chain_d4",
+  "category": "synthetic",
+  "generation": "synthetic",
+  "netlist": {
+    "file": "netlist.v",
+    "sha256": "716ec898f6838f6d1aaa21df76309e2ecaab3b2449cd6c57dd701fa5968f2b95",
+    "level": "gate"
+  },
+  "vcd": "sim.vcd",
+  "no_inject_vcd": "sim_no_inject.vcd",
+  "testbench": "tb.v",
+  "sim_env": {
+    "simulator": "iverilog",
+    "version": "12.0",
+    "timescale": "1ns/1ps"
+  },
+  "timing": {
+    "clock_period_ticks": 10000,
+    "clock_edge": "posedge"
+  },
+  "query": {
+    "signal": "tb.dut.ff3.Q[0]",
+    "time": 200000
+  },
+  "x_injection": {
+    "method": "force",
+    "target": "tb.dut.ff0.Q[0]",
+    "value": "1'bx",
+    "time": 160000,
+    "injection_class": "uninit_ff"
+  },
+  "expected": {
+    "injection_target": "tb.dut.ff0.Q[0]",
+    "injection_time": 160000,
+    "query_signal": "tb.dut.ff3.Q[0]",
+    "query_time": 200000,
+    "injection_class": "uninit_ff",
+    "max_output": 5
+  },
+  "status": "golden",
+  "author": "agent-S2-fixed"
+}

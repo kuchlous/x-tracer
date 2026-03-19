@@ -1,0 +1,43 @@
+{
+  "id": "synth_s2_reset_chain_async_d4",
+  "category": "synthetic",
+  "generation": "synthetic",
+  "netlist": {
+    "file": "netlist.v",
+    "sha256": "56e4f5c5b63d6a92163d2db6b0ff41db61d496f29b1106eb56fb4e223a7bb40e",
+    "level": "gate"
+  },
+  "vcd": "sim.vcd",
+  "no_inject_vcd": "sim_no_inject.vcd",
+  "testbench": "tb.v",
+  "sim_env": {
+    "simulator": "iverilog",
+    "version": "12.0",
+    "timescale": "1ns/1ps"
+  },
+  "timing": {
+    "clock_period_ticks": 10000,
+    "clock_edge": "posedge"
+  },
+  "query": {
+    "signal": "tb.dut.q_out[0]",
+    "time": 170000
+  },
+  "x_injection": {
+    "method": "force",
+    "target": "tb.dut.rst_n",
+    "value": "1'bx",
+    "time": 160000,
+    "injection_class": "primary_input"
+  },
+  "expected": {
+    "injection_target": "tb.dut.rst_n[0]",
+    "injection_time": 160000,
+    "query_signal": "tb.dut.q_out[0]",
+    "query_time": 170000,
+    "injection_class": "primary_input",
+    "max_output": 6
+  },
+  "status": "golden",
+  "author": "agent-S2-fixed"
+}

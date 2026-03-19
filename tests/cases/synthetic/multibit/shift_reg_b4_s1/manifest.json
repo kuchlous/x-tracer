@@ -1,0 +1,43 @@
+{
+  "id": "synth_s3_shift_reg_b4_s1",
+  "category": "synthetic",
+  "generation": "synthetic",
+  "netlist": {
+    "file": "netlist.v",
+    "sha256": "2e85a3347241d5ef25f46f5e6976a90bd5a4183ea9410f5768017ae5da73bcca",
+    "level": "gate"
+  },
+  "vcd": "sim.vcd",
+  "no_inject_vcd": "sim_no_inject.vcd",
+  "testbench": "tb.v",
+  "sim_env": {
+    "simulator": "iverilog",
+    "version": "12.0",
+    "timescale": "1ns/1ps"
+  },
+  "timing": {
+    "clock_period_ticks": 10000,
+    "clock_edge": "posedge"
+  },
+  "query": {
+    "signal": "tb.dut.q[5]",
+    "time": 166000
+  },
+  "x_injection": {
+    "method": "force",
+    "target": "tb.dut.sr[4]",
+    "value": "1'bx",
+    "time": 156000,
+    "injection_class": "uninit_ff"
+  },
+  "expected": {
+    "injection_target": "tb.dut.sr[4]",
+    "injection_time": 156000,
+    "query_signal": "tb.dut.q[5]",
+    "query_time": 166000,
+    "injection_class": "uninit_ff",
+    "max_output": 2
+  },
+  "status": "golden",
+  "author": "agent-S3"
+}

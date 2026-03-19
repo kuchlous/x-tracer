@@ -1,0 +1,65 @@
+$date
+	Mon Mar 16 12:32:14 2026
+$end
+$version
+	Icarus Verilog
+$end
+$timescale
+	1ps
+$end
+$scope module tb $end
+$var wire 8 ! out [7:0] $end
+$var reg 1 " in0 $end
+$var reg 1 # in1 $end
+$var reg 1 $ in2 $end
+$var reg 1 % in3 $end
+$var reg 1 & in4 $end
+$var reg 1 ' in5 $end
+$var reg 1 ( in6 $end
+$var reg 1 ) in7 $end
+$scope module dut $end
+$var wire 1 * c0 $end
+$var wire 1 + c1 $end
+$var wire 1 , c2 $end
+$var wire 1 - c3 $end
+$var wire 1 . c4 $end
+$var wire 1 / c5 $end
+$var wire 1 0 c6 $end
+$var wire 1 1 c7 $end
+$var wire 1 " in0 $end
+$var wire 1 # in1 $end
+$var wire 1 $ in2 $end
+$var wire 1 % in3 $end
+$var wire 1 & in4 $end
+$var wire 1 ' in5 $end
+$var wire 1 ( in6 $end
+$var wire 1 ) in7 $end
+$var wire 8 2 out [7:0] $end
+$upscope $end
+$upscope $end
+$enddefinitions $end
+$comment Show the parameter values. $end
+$dumpall
+$end
+#0
+$dumpvars
+b0 2
+01
+00
+0/
+0.
+0-
+0,
+0+
+0*
+0)
+0(
+0'
+0&
+0%
+0$
+0#
+0"
+b0 !
+$end
+#30000

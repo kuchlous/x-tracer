@@ -1,0 +1,25 @@
+`timescale 1ns/1ps
+module tb;
+  reg [7:0] bus;
+  wire [3:0] out;
+
+  bit_slice_dut dut (
+    .bus(bus),
+    .out(out)
+  );
+
+  initial begin
+    $dumpfile("sim.vcd");
+    $dumpvars(0, tb);
+  end
+
+  initial begin
+    bus = 8'b0;
+    #10;
+    force tb.dut.bus[4] = 1'bx;
+    #20;
+    $finish;
+  end
+
+  initial #100 $finish;
+endmodule

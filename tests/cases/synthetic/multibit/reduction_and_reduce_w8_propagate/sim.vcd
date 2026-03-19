@@ -1,0 +1,32 @@
+$date
+	Mon Mar 16 12:16:23 2026
+$end
+$version
+	Icarus Verilog
+$end
+$timescale
+	1ps
+$end
+$scope module tb $end
+$var wire 1 ! reduced_out $end
+$var reg 8 " bus [7:0] $end
+$scope module dut $end
+$var wire 8 # bus [7:0] $end
+$var wire 1 ! reduced_out $end
+$upscope $end
+$upscope $end
+$enddefinitions $end
+$comment Show the parameter values. $end
+$dumpall
+$end
+#0
+$dumpvars
+b11111110 #
+b11111110 "
+0!
+$end
+#10000
+x!
+b1111111x "
+b1111111x #
+#30000
