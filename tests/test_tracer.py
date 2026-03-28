@@ -11,7 +11,7 @@ from src.vcd import load_vcd, VCDDatabase
 from src.gates import GateModel
 from src.tracer import trace_x, collect_leaves, XCause
 
-CASES_DIR = Path("/home/ubuntu/x-tracer/tests/cases/synthetic")
+CASES_DIR = Path(__file__).resolve().parent / "cases" / "synthetic"
 
 
 def _parse_sig_bit(sig_str: str) -> tuple[str, int]:

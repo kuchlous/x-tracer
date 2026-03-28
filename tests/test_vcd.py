@@ -271,7 +271,7 @@ $end
 
 # --- Tests using real VCD files from testcase suite ---
 
-REAL_VCD = Path("/home/ubuntu/x-tracer/tests/cases/synthetic/gates/synth_s1_and_2in_xmask01_0/sim.vcd")
+REAL_VCD = Path(__file__).resolve().parent / "cases" / "synthetic" / "gates" / "synth_s1_and_2in_xmask01_0" / "sim.vcd"
 
 
 @pytest.mark.skipif(not REAL_VCD.exists(), reason="Real VCD file not found")
@@ -302,25 +302,12 @@ class TestRealVCD:
 
 class TestLoadVcdFallback:
     def test_fallback_to_pyvcd(self):
+        """Test that pyvcd backend works directly (the fallback path)."""
         path = _write_vcd(SIMPLE_VCD)
         try:
-            # Simulate pywellen not available
-            with patch.dict("sys.modules", {"pywellen": None}):
-                # Need to also block the backend import
-                import importlib
-                import vcd.pywellen_backend
-                orig = sys.modules.get("vcd.pywellen_backend")
-                sys.modules["vcd.pywellen_backend"] = None
-                try:
-                    # Import fresh
-                    from vcd.pyvcd_backend import load
-                    db = load(path)
-                    assert db.has_signal("tb.clk")
-                finally:
-                    if orig is not None:
-                        sys.modules["vcd.pywellen_backend"] = orig
-                    else:
-                        sys.modules.pop("vcd.pywellen_backend", None)
+            from src.vcd.pyvcd_backend import _load_pyvcd_tokenizer
+            db = _load_pyvcd_tokenizer(Path(path))
+            assert db.has_signal("tb.clk")
         finally:
             os.unlink(path)
 

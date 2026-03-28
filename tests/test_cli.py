@@ -8,8 +8,9 @@ from pathlib import Path
 
 import pytest
 
-CASES_DIR = Path("/home/ubuntu/x-tracer/tests/cases/synthetic")
-X_TRACER = [sys.executable, str(Path("/home/ubuntu/x-tracer/x_tracer.py"))]
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+CASES_DIR = _PROJECT_ROOT / "tests" / "cases" / "synthetic"
+X_TRACER = [sys.executable, str(_PROJECT_ROOT / "x_tracer.py")]
 
 
 def _run_cli(*args, expect_rc=0) -> subprocess.CompletedProcess:
@@ -17,7 +18,7 @@ def _run_cli(*args, expect_rc=0) -> subprocess.CompletedProcess:
     result = subprocess.run(
         X_TRACER + list(args),
         capture_output=True, text=True,
-        cwd="/home/ubuntu/x-tracer",
+        cwd=str(_PROJECT_ROOT),
     )
     if expect_rc is not None:
         assert result.returncode == expect_rc, (
