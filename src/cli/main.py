@@ -54,16 +54,26 @@ def parse_signal(signal_str: str) -> tuple[str, int]:
               help="Top module name (auto-detected if omitted)")
 @click.option("--vcd-prefix", default=None, type=str,
               help="VCD hierarchy prefix that maps to netlist top, e.g. 'rjn_top.u_rjn_soc_top'")
-def cli(netlist, vcd, signal, query_time, output_format, max_depth, top_module, vcd_prefix):
+@click.option("--fast-parser", is_flag=True, default=False,
+              help="Use fast regex-based netlist parser (recommended for large netlists >10MB)")
+def cli(netlist, vcd, signal, query_time, output_format, max_depth, top_module, vcd_prefix, fast_parser):
     """X-Tracer: trace the root cause of X values in gate-level simulations."""
     # Parse signal
     sig_path, sig_bit = parse_signal(signal)
 
     # Parse netlist
     try:
-        from src.netlist import parse_netlist
         netlist_files = [Path(f) for f in netlist]
-        graph = parse_netlist(netlist_files, top_module=top_module)
+        # Auto-detect: use fast parser for large files (>10MB total) or if explicitly requested
+        total_size = sum(p.stat().st_size for p in netlist_files)
+        use_fast = fast_parser or total_size > 10 * 1024 * 1024
+        if use_fast:
+            from src.netlist import parse_netlist_fast
+            click.echo("Using fast regex-based parser", err=True)
+            graph = parse_netlist_fast(netlist_files, top_module=top_module)
+        else:
+            from src.netlist import parse_netlist
+            graph = parse_netlist(netlist_files, top_module=top_module)
     except Exception as e:
         click.echo(f"Error parsing netlist: {e}", err=True)
         sys.exit(1)
@@ -71,10 +81,22 @@ def cli(netlist, vcd, signal, query_time, output_format, max_depth, top_module, 
     # Load VCD
     try:
         from src.vcd import load_vcd
+        from src.vcd.database import PrefixMappedVCD
         vcd_db = load_vcd(Path(vcd))
     except Exception as e:
         click.echo(f"Error loading VCD: {e}", err=True)
         sys.exit(1)
+
+    # Apply VCD-to-netlist path prefix mapping if specified
+    if vcd_prefix:
+        netlist_top = top_module or "unknown"
+        # Auto-detect netlist top from the graph if not specified
+        if netlist_top == "unknown":
+            all_sigs = graph.get_all_signals()
+            if all_sigs:
+                netlist_top = next(iter(all_sigs)).split('.')[0]
+        click.echo(f"Path mapping: VCD '{vcd_prefix}.*' -> netlist '{netlist_top}.*'", err=True)
+        vcd_db = PrefixMappedVCD(vcd_db, vcd_prefix, netlist_top)
 
     click.echo(f"VCD timescale: {_format_timescale(vcd_db.timescale_fs)}", err=True)
 

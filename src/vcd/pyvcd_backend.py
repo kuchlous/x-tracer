@@ -141,10 +141,14 @@ def _load_line_parser(vcd_path: Path, signals: set[str] | None = None) -> VCDDat
     _bitrange_re = re.compile(r'\s*\[\d+(?::\d+)?\]\s*$')
 
     # --- Phase 1: Parse header in text mode (handles encoding issues) ---
+    # Use readline() instead of iterator to allow tell() for body offset
     in_timescale = False
     body_offset = 0
     with open(vcd_path, 'r', errors='replace') as f:
-        for line in f:
+        while True:
+            line = f.readline()
+            if not line:
+                break
             stripped = line.strip()
             if not stripped:
                 continue
@@ -276,6 +280,76 @@ def _load_line_parser(vcd_path: Path, signals: set[str] | None = None) -> VCDDat
         logger.info("VCD parsing complete: %d lines processed", line_count)
 
     return VCDDatabase(transitions, all_signal_names, timescale_fs=timescale_fs)
+
+
+def parse_vcd_header(vcd_path: Path) -> tuple[set[str], int]:
+    """Parse only the VCD header (up to $enddefinitions $end).
+
+    Returns (signal_names, timescale_fs) for fast signal existence checking
+    without loading the full file.
+
+    Handles Cadence non-standard names with non-numeric brackets.
+    """
+    import re
+    from .database import _TS_UNITS
+
+    scope_stack: list[str] = []
+    signal_names: set[str] = set()
+    timescale_fs = 1000  # default 1ps
+
+    _var_re = re.compile(r'^\$var\s+\w+\s+\d+\s+(\S+)\s+(.*?)\s+\$end')
+    _scope_re = re.compile(r'^\$scope\s+\w+\s+(\S+)\s+\$end')
+    _upscope_re = re.compile(r'^\$upscope\s+\$end')
+    _enddefs_re = re.compile(r'^\$enddefinitions\s+\$end')
+    _timescale_re = re.compile(r'(\d+)\s*(s|ms|us|ns|ps|fs)', re.IGNORECASE)
+    _bitrange_re = re.compile(r'\s*\[\d+(?::\d+)?\]\s*$')
+
+    in_timescale = False
+
+    with open(vcd_path, 'r', errors='replace') as f:
+        for line in f:
+            stripped = line.strip()
+            if not stripped:
+                continue
+
+            if stripped.startswith('$timescale'):
+                in_timescale = True
+                m = _timescale_re.search(stripped)
+                if m:
+                    timescale_fs = int(m.group(1)) * _TS_UNITS[m.group(2).lower()]
+                    in_timescale = False
+                continue
+            if in_timescale:
+                m = _timescale_re.search(stripped)
+                if m:
+                    timescale_fs = int(m.group(1)) * _TS_UNITS[m.group(2).lower()]
+                if '$end' in stripped:
+                    in_timescale = False
+                continue
+
+            m = _scope_re.match(stripped)
+            if m:
+                scope_stack.append(m.group(1))
+                continue
+
+            m = _upscope_re.match(stripped)
+            if m:
+                if scope_stack:
+                    scope_stack.pop()
+                continue
+
+            m = _var_re.match(stripped)
+            if m:
+                reference = m.group(2)
+                ref_clean = _bitrange_re.sub('', reference)
+                hier_name = '.'.join(scope_stack + [ref_clean])
+                signal_names.add(hier_name)
+                continue
+
+            if _enddefs_re.match(stripped):
+                break
+
+    return signal_names, timescale_fs
 
 
 def _normalize_vector_value(value) -> str:

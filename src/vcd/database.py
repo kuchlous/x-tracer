@@ -157,6 +157,68 @@ def _extract_bit(value: str, bit: int) -> str:
     return value[idx].lower()
 
 
+class PrefixMappedVCD(VCDDatabase):
+    """VCD wrapper that translates between netlist paths and VCD paths.
+
+    Example: if vcd_prefix='rjn_top.u_rjn_soc_top' and netlist_top='rjn_soc_top',
+    then netlist signal 'rjn_soc_top.inst_foo.Y' maps to VCD signal
+    'rjn_top.u_rjn_soc_top.inst_foo.Y'.
+    """
+
+    def __init__(self, inner: VCDDatabase, vcd_prefix: str, netlist_top: str):
+        # Don't call super().__init__ — we delegate to inner
+        self._inner = inner
+        self._vcd_prefix = vcd_prefix.rstrip('.')
+        self._netlist_top = netlist_top.rstrip('.')
+        self.timescale_fs = inner.timescale_fs
+
+    def _to_vcd(self, signal: str) -> str:
+        """Translate netlist signal path to VCD signal path."""
+        if signal.startswith(self._netlist_top + '.'):
+            return self._vcd_prefix + signal[len(self._netlist_top):]
+        if signal.startswith(self._vcd_prefix + '.'):
+            return signal  # already a VCD path
+        return signal
+
+    def get_value(self, signal: str, time: int) -> str:
+        return self._inner.get_value(self._to_vcd(signal), time)
+
+    def get_bit(self, signal: str, bit: int, time: int) -> str:
+        return self._inner.get_bit(self._to_vcd(signal), bit, time)
+
+    def get_transitions(self, signal: str) -> list[tuple[int, str]]:
+        return self._inner.get_transitions(self._to_vcd(signal))
+
+    def first_x_time(self, signal: str, bit: int, after: int = 0) -> int | None:
+        return self._inner.first_x_time(self._to_vcd(signal), bit, after)
+
+    def find_edge(self, signal: str, bit: int, edge: str, before: int) -> int | None:
+        return self._inner.find_edge(self._to_vcd(signal), bit, edge, before)
+
+    def has_signal(self, signal: str) -> bool:
+        return self._inner.has_signal(self._to_vcd(signal))
+
+    def get_all_signals(self) -> set[str]:
+        return self._inner.get_all_signals()
+
+    def ps_to_vcd(self, ps: int) -> int:
+        return self._inner.ps_to_vcd(ps)
+
+    def vcd_to_ps(self, vcd_time: int) -> int:
+        return self._inner.vcd_to_ps(vcd_time)
+
+
+def load_vcd_header(vcd_path: Path | str) -> tuple[set[str], int]:
+    """Parse only the VCD header for fast signal existence checking.
+
+    Returns (signal_names: set[str], timescale_fs: int).
+    Does not load any value-change data -- only reads up to $enddefinitions $end.
+    """
+    vcd_path = Path(vcd_path)
+    from .pyvcd_backend import parse_vcd_header
+    return parse_vcd_header(vcd_path)
+
+
 def load_vcd(vcd_path: Path | str, signals: set[str] | None = None) -> VCDDatabase:
     """Load VCD file. If signals is provided, only load those signals (optimization).
 

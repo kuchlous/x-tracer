@@ -41,6 +41,30 @@ class NetlistGraph:
             self._signal_to_fanout[sig].append(gate)
             self._all_signals.add(sig)
 
+    def add_gate_fast(self, gate: Gate) -> None:
+        """Register a gate -- optimized version with inlined signal key computation.
+
+        Avoids the overhead of _pin_signal function calls and isinstance checks.
+        Only call this if all pin values in gate.inputs/outputs are Pin instances.
+        """
+        inst_path = gate.instance_path
+        self._gates[inst_path] = gate
+        _drivers = self._signal_to_drivers
+        _fanout = self._signal_to_fanout
+        _sigs = self._all_signals
+        for port_name, pin in gate.outputs.items():
+            sig = pin.signal if pin.bit is None else f"{pin.signal}[{pin.bit}]"
+            _drivers[sig].append(gate)
+            _sigs.add(sig)
+            port_path = inst_path + '.' + port_name
+            if port_path != sig:
+                _drivers[port_path].append(gate)
+                _sigs.add(port_path)
+        for port_name, pin in gate.inputs.items():
+            sig = pin.signal if pin.bit is None else f"{pin.signal}[{pin.bit}]"
+            _fanout[sig].append(gate)
+            _sigs.add(sig)
+
     def get_drivers(self, signal: str) -> list[Gate]:
         """Return all gates that drive this signal (usually 1, >1 for multi-driver)."""
         return list(self._signal_to_drivers.get(signal, []))
