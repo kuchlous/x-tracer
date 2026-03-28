@@ -9,7 +9,7 @@ from typing import Optional
 
 from . import primitives as P
 
-# Known PDK prefixes to strip
+# Known PDK prefixes to strip (lowercase)
 _PDK_PREFIXES = [
     'sky130_fd_sc_hd__',
     'sky130_fd_sc_hs__',
@@ -26,14 +26,45 @@ _PDK_PREFIXES = [
 # Drive strength suffix pattern: _0, _1, _2, _4, _8, _16, etc.
 _DRIVE_SUFFIX = re.compile(r'_\d+$')
 
+# TSMC / ARM Artisan cell naming: CELLFUNC_XDRIVE_TECHSUFFIX
+# Examples: AND2_X1M_A9PP140ZTH_C30, INV_X0P5B_A9PP140ZTH_C35
+# The tech suffix matches: _A9PP140Z<vt>_C<corner>
+# Also handles other TSMC families: A9PP140ZTL, A9PP140ZTS, A9PP140ZTUH
+_TSMC_SUFFIX_RE = re.compile(r'_X[\dP]+[BM]_A\d+PP\d+Z\w+_C\d+$', re.IGNORECASE)
+
+# Generic Artisan-style: strip drive strength + tech suffix
+# Pattern: FUNC_X<drive><type>_<techid> where drive can be 0P5, 1, 1P4, 2, etc.
+_ARTISAN_DRIVE_SUFFIX_RE = re.compile(r'_X[\dP]+[BM]$', re.IGNORECASE)
+
 
 def strip_cell_name(cell_type: str) -> str:
-    """Strip PDK prefix and drive strength suffix to get base function name."""
+    """Strip PDK prefix and drive strength suffix to get base function name.
+
+    Handles two naming conventions:
+    1. Prefix-based (Sky130, GF180, ASAP7): sky130_fd_sc_hd__and2_1 → and2
+    2. Suffix-based (TSMC/Artisan): AND2_X1M_A9PP140ZTH_C30 → and2
+    """
     name = cell_type.lower()
+
+    # Try prefix-based stripping first (Sky130, etc.)
     for prefix in _PDK_PREFIXES:
         if name.startswith(prefix):
             name = name[len(prefix):]
-            break
+            name = _DRIVE_SUFFIX.sub('', name)
+            return name
+
+    # Try TSMC/Artisan suffix-based stripping
+    # First strip full tech suffix: _X<drive>_A<tech>_C<corner>
+    stripped = _TSMC_SUFFIX_RE.sub('', name)
+    if stripped != name:
+        return stripped
+
+    # Try stripping just the drive strength suffix: _X<drive><type>
+    stripped = _ARTISAN_DRIVE_SUFFIX_RE.sub('', name)
+    if stripped != name:
+        return stripped
+
+    # Fallback: just strip trailing _N drive strength
     name = _DRIVE_SUFFIX.sub('', name)
     return name
 
@@ -88,8 +119,8 @@ def identify_cell(cell_type: str) -> Optional[CellInfo]:
         if not _AOI_GROUPS_RE.match(base) and not _OAI_GROUPS_RE.match(base):
             return CellInfo('inv')
 
-    # Buffer variants
-    if base in ('buf', 'clkbuf') or (base.startswith('buf') and 'bufif' not in base):
+    # Buffer variants (buf, bufh, clkbuf, but not bufif)
+    if base in ('buf', 'bufh', 'clkbuf') or (base.startswith('buf') and 'bufif' not in base):
         return CellInfo('buf')
 
     # Basic gate families with input count
@@ -98,43 +129,82 @@ def identify_cell(cell_type: str) -> Optional[CellInfo]:
         if m:
             return CellInfo(fam, num_inputs=int(m.group(1)))
 
-    # AOI: a21oi, a22oi, a211oi, a31oi, etc.
+    # AOI: a21oi, a22oi, a211oi, a31oi, aoi21, aoi22, aoi211, aoi31, etc.
     m = _AOI_GROUPS_RE.match(base)
     if m:
         groups = _parse_aoi_oai_groups(m.group(1))
         return CellInfo('aoi', groups=groups)
+    # TSMC style: aoi21, aoi22, aoi211, aoi31, etc.
+    m = re.match(r'^aoi(\d+)(?:[a-z].*)?$', base)
+    if m:
+        groups = _parse_aoi_oai_groups(m.group(1))
+        return CellInfo('aoi', groups=groups)
 
-    # OAI: o21ai, o22ai, o211ai, etc.
+    # OAI: o21ai, o22ai, o211ai, oai21, oai22, etc.
     m = _OAI_GROUPS_RE.match(base)
     if m:
         groups = _parse_aoi_oai_groups(m.group(1))
         return CellInfo('oai', groups=groups)
+    # TSMC style: oai21, oai22, oai211, etc.
+    m = re.match(r'^oai(\d+)(?:[a-z].*)?$', base)
+    if m:
+        groups = _parse_aoi_oai_groups(m.group(1))
+        return CellInfo('oai', groups=groups)
+
+    # AO (and-or, non-inverted): ao21, ao22, ao1b2, etc.
+    m = re.match(r'^ao(\d+)(?:[a-z].*)?$', base)
+    if m and 'aoi' not in base:
+        groups = _parse_aoi_oai_groups(m.group(1))
+        return CellInfo('ao', groups=groups)
+
+    # OA (or-and, non-inverted): oa21, oa22, etc.
+    m = re.match(r'^oa(\d+)(?:[a-z].*)?$', base)
+    if m and 'oai' not in base:
+        groups = _parse_aoi_oai_groups(m.group(1))
+        return CellInfo('oa', groups=groups)
 
     # MUX
-    if base == 'mux2':
+    if base in ('mux2', 'mux2i'):
         return CellInfo('mux2')
     if base == 'mux4':
         return CellInfo('mux4')
 
-    # Half adder
-    if base in ('ha', 'halfadder'):
+    # Half adder: ha, addh, addha
+    if base in ('ha', 'halfadder', 'addh', 'addha'):
         return CellInfo('ha')
 
-    # Full adder
-    if base in ('fa', 'fulladder'):
+    # Full adder: fa, addf
+    if base in ('fa', 'fulladder', 'addf'):
         return CellInfo('fa')
 
     # Majority gate
     if base in ('maj', 'maj3', 'majority'):
         return CellInfo('maj')
 
+    # Tie cells (constant outputs)
+    if base in ('tiehi', 'tielo', 'tieh', 'tiel'):
+        return CellInfo('tie')
+
+    # Clock gate cells: cgen, cgencin, etc.
+    if base.startswith('cgen') or base.startswith('fricg'):
+        return CellInfo('clock_gate')
+
     # Sequential cells (DFF variants)
+    # Covers: dff*, dfx*, dfr*, dfs*, dfb*, sdf* (scan DFFs)
     if any(base.startswith(p) for p in ('dff', 'dfx', 'dfr', 'dfs', 'dfb', 'sdf')):
         return CellInfo('dff')
 
     # Latch variants
     if base.startswith('lat') or base.startswith('dlat'):
         return CellInfo('latch')
+
+    # Fill/antenna/endcap cells — not functional
+    if any(base.startswith(p) for p in ('fill', 'antenna', 'endcap', 'decap')):
+        return CellInfo('filler')
+
+    # Delay cells
+    if base.startswith('dly'):
+        return CellInfo('buf')
 
     return None
 
@@ -253,6 +323,37 @@ def forward_cell(info: CellInfo, inputs: dict[str, str]) -> str:
         ac = P.eval_and([a, c])
         return P.eval_or([ab, bc, ac])
 
+    if fam == 'ao':
+        # AO: Y = (group0_AND | group1_AND | ...) — non-inverted
+        port_groups = _make_aoi_ports(info.groups)
+        or_inputs = []
+        for group in port_groups:
+            vals = [P._norm(inputs.get(p, 'x')) for p in group]
+            or_inputs.append(P.eval_and(vals))
+        return P.eval_or(or_inputs)
+
+    if fam == 'oa':
+        # OA: Y = (group0_OR & group1_OR & ...) — non-inverted
+        port_groups = _make_aoi_ports(info.groups)
+        and_inputs = []
+        for group in port_groups:
+            vals = [P._norm(inputs.get(p, 'x')) for p in group]
+            and_inputs.append(P.eval_or(vals))
+        return P.eval_and(and_inputs)
+
+    if fam == 'tie':
+        return '0'  # tiehi/tielo — constant output, never X
+
+    if fam == 'filler':
+        return '0'  # filler cells have no functional output
+
+    if fam == 'clock_gate':
+        # Clock gate: conservative — if enable or clock is X, output is X
+        for port, val in inputs.items():
+            if P._norm(val) == 'x':
+                return 'x'
+        return '0'
+
     if fam in ('dff', 'latch'):
         # Sequential: forward returns 'x' if any control is X
         # This is a simplified model — the tracer core handles the full logic
@@ -303,6 +404,21 @@ def backward_cell(info: CellInfo, inputs: dict[str, str]) -> list[str]:
 
     if fam == 'mux4':
         return _backward_mux4(inputs)
+
+    if fam == 'ao':
+        # AO: Y = (G0 | G1 | ...) where Gi = AND of group i inputs
+        # Same logic as AOI backward but without inversion
+        return _backward_aoi(info.groups, inputs)
+
+    if fam == 'oa':
+        # OA: Y = (G0 & G1 & ...) where Gi = OR of group i inputs
+        return _backward_oai(info.groups, inputs)
+
+    if fam in ('tie', 'filler'):
+        return []  # constant cells never cause X
+
+    if fam == 'clock_gate':
+        return [p for p, v in inputs.items() if P._norm(v) == 'x']
 
     if fam in ('ha', 'fa', 'maj'):
         # XOR-based / complex — conservative: return all X inputs

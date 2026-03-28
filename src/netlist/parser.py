@@ -272,12 +272,16 @@ def _handle_uninstantiated(sym: pyslang.UninstantiatedDefSymbol, graph: NetlistG
     # Known output port names for standard cells
     _OUT_PORTS = {"Y", "X", "Z", "ZN", "Q", "QN", "Q_N", "CO", "COUT", "SUM", "S",
                   "SO", "HI", "LO"}
+    # Power/ground ports to ignore (not functional connections)
+    _PG_PORTS = {"VDD", "VSS", "VNW", "VPW", "VDDPE", "VDDCE", "VSSE"}
 
     inputs: dict[str, Pin] = {}
     outputs: dict[str, Pin] = {}
     port_names: list[str] = []
 
     for pname, pc in zip(sym.portNames, sym.portConnections):
+        if pname in _PG_PORTS:
+            continue  # skip power/ground ports
         port_names.append(pname)
         expr = pc.expr
         pin = _expr_to_pin(expr)

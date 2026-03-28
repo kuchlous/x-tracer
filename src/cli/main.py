@@ -9,6 +9,17 @@ from pathlib import Path
 import click
 
 from .formatters import format_text, format_json, format_dot
+from src.vcd.database import _TS_UNITS
+
+
+def _format_timescale(timescale_fs: int) -> str:
+    """Convert timescale in femtoseconds to human-readable string."""
+    for unit, fs_per in sorted(_TS_UNITS.items(), key=lambda x: x[1]):
+        if timescale_fs % fs_per == 0:
+            n = timescale_fs // fs_per
+            if n <= 1000:
+                return f"{n} {unit}"
+    return f"{timescale_fs} fs"
 
 
 def parse_signal(signal_str: str) -> tuple[str, int]:
@@ -63,16 +74,22 @@ def cli(netlist, vcd, signal, query_time, output_format, max_depth, top_module):
         click.echo(f"Error loading VCD: {e}", err=True)
         sys.exit(1)
 
+    click.echo(f"VCD timescale: {_format_timescale(vcd_db.timescale_fs)}", err=True)
+
+    # Convert user's picosecond time to VCD-native time units
+    vcd_time = vcd_db.ps_to_vcd(query_time)
+    click.echo(f"Query: {sig_path}[{sig_bit}] @ {query_time} ps (VCD time: {vcd_time})", err=True)
+
     # Check signal exists in VCD
     if not vcd_db.has_signal(sig_path):
         click.echo(f"Error: signal '{sig_path}' not found in VCD", err=True)
         sys.exit(1)
 
     # Check signal is X at query time
-    val = vcd_db.get_bit(sig_path, sig_bit, query_time)
+    val = vcd_db.get_bit(sig_path, sig_bit, vcd_time)
     if val != 'x':
         click.echo(
-            f"Signal is not X at time {query_time} (value={val})",
+            f"Signal is not X at time {query_time} ps (value={val})",
             err=True,
         )
         sys.exit(1)
@@ -84,7 +101,7 @@ def cli(netlist, vcd, signal, query_time, output_format, max_depth, top_module):
     gate_model = GateModel()
     try:
         result = trace_x(graph, vcd_db, gate_model,
-                         sig_path, sig_bit, query_time,
+                         sig_path, sig_bit, vcd_time,
                          max_depth=max_depth)
     except Exception as e:
         click.echo(f"Error during trace: {e}", err=True)

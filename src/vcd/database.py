@@ -7,26 +7,50 @@ from pathlib import Path
 from typing import Optional
 
 
+# Timescale unit to femtoseconds conversion
+_TS_UNITS = {
+    's': 1_000_000_000_000_000,
+    'ms': 1_000_000_000_000,
+    'us': 1_000_000_000,
+    'ns': 1_000_000,
+    'ps': 1_000,
+    'fs': 1,
+}
+
+
 class VCDDatabase:
     """Queryable database of signal transitions loaded from a VCD file.
 
     Internal storage: per-signal sorted list of (time, value_string) tuples.
     Lookups use bisect for O(log n) performance.
+    Times are stored in VCD-native units internally; the timescale_fs attribute
+    allows callers to convert to/from picoseconds if needed.
     """
 
-    def __init__(self, transitions: dict[str, list[tuple[int, str]]], signals: set[str]):
+    def __init__(self, transitions: dict[str, list[tuple[int, str]]], signals: set[str],
+                 timescale_fs: int = 1000):
         """Initialize from pre-parsed transition data.
 
         Args:
             transitions: signal_path -> sorted list of (time, value_string)
             signals: set of all signal paths present in the VCD
+            timescale_fs: timescale in femtoseconds per VCD time unit (default 1000 = 1ps)
         """
         self._transitions = transitions
         self._signals = signals
+        self.timescale_fs = timescale_fs
         # Pre-extract sorted time arrays for bisect
         self._times: dict[str, list[int]] = {
             sig: [t for t, _ in tlist] for sig, tlist in transitions.items()
         }
+
+    def ps_to_vcd(self, ps: int) -> int:
+        """Convert picoseconds to VCD-native time units."""
+        return (ps * 1000) // self.timescale_fs
+
+    def vcd_to_ps(self, vcd_time: int) -> int:
+        """Convert VCD-native time units to picoseconds."""
+        return (vcd_time * self.timescale_fs) // 1000
 
     def get_value(self, signal: str, time: int) -> str:
         """Get full value string of signal at time (e.g., '01x0' for a 4-bit bus)."""
