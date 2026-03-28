@@ -52,7 +52,9 @@ def parse_signal(signal_str: str) -> tuple[str, int]:
               help="Maximum trace depth")
 @click.option("--top-module", default=None, type=str,
               help="Top module name (auto-detected if omitted)")
-def cli(netlist, vcd, signal, query_time, output_format, max_depth, top_module):
+@click.option("--vcd-prefix", default=None, type=str,
+              help="VCD hierarchy prefix that maps to netlist top, e.g. 'rjn_top.u_rjn_soc_top'")
+def cli(netlist, vcd, signal, query_time, output_format, max_depth, top_module, vcd_prefix):
     """X-Tracer: trace the root cause of X values in gate-level simulations."""
     # Parse signal
     sig_path, sig_bit = parse_signal(signal)

@@ -71,8 +71,8 @@ class GateModel:
             return P.eval_buf(val)
 
         if ct in _TRISTATE:
-            data = inputs.get('in0', inputs.get('data', 'x'))
-            enable = inputs.get('in1', inputs.get('enable', 'x'))
+            data = inputs.get('in0', inputs.get('A', inputs.get('data', 'x')))
+            enable = inputs.get('in1', inputs.get('B', inputs.get('enable', 'x')))
             return _TRISTATE_FN[ct](data, enable)
 
         # Also handle "assign" as a buffer
@@ -112,8 +112,8 @@ class GateModel:
             return P.backward_buf_not(inputs)
         if ct in _TRISTATE:
             active = _TRISTATE_ACTIVE[ct]
-            data_port = 'in0' if 'in0' in inputs else 'data'
-            enable_port = 'in1' if 'in1' in inputs else 'enable'
+            data_port = 'in0' if 'in0' in inputs else ('A' if 'A' in inputs else 'data')
+            enable_port = 'in1' if 'in1' in inputs else ('B' if 'B' in inputs else 'enable')
             return P.backward_bufif(
                 data_port, enable_port,
                 inputs.get(data_port, 'x'),

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from pathlib import Path
 
 import pyslang
@@ -16,6 +17,9 @@ from .gate import Gate, Pin
 from .graph import NetlistGraph, _pin_signal
 
 logger = logging.getLogger(__name__)
+
+# Progress logging interval (number of gates between log messages)
+_PROGRESS_INTERVAL = 100_000
 
 # --- Sequential detection patterns ---
 
@@ -42,6 +46,24 @@ _Q_PORTS = {"Q", "q", "QN", "qn", "DOUT", "dout", "Q_N"}
 _RESET_PORTS = {"RST", "rst", "RESET", "reset", "RESET_B", "RST_B",
                 "RESET_N", "RST_N", "RN", "CLR", "clr", "CDN"}
 _SET_PORTS = {"SET", "set", "SET_B", "SET_N", "SN", "SDN", "PRE", "pre"}
+
+
+# Power/ground ports to skip (not functional connections)
+_PG_PORTS = frozenset({"VDD", "VSS", "VNW", "VPW", "VDDPE", "VDDCE", "VSSE"})
+
+# Patterns that identify TSMC leaf cells (no need to check for sub-instances)
+_LEAF_CELL_PATTERNS = (
+    re.compile(r"_A9PP\d+Z"),       # TSMC A9 process cells
+    re.compile(r"_[A-Z]*\d+X\d*"),  # Common TSMC naming: ..._X1, ..._D2X1
+)
+
+
+def _is_leaf_cell_name(name: str) -> bool:
+    """Fast check: does this module name look like a leaf standard cell?"""
+    for pat in _LEAF_CELL_PATTERNS:
+        if pat.search(name):
+            return True
+    return False
 
 
 def _is_sequential(cell_type: str) -> bool:
@@ -92,63 +114,113 @@ def parse_netlist(
     Returns:
         A NetlistGraph with all gates and connectivity.
     """
+    overall_t0 = time.time()
     graph = NetlistGraph()
 
+    # --- Phase 1: Parse syntax trees ---
     trees = []
     for f in verilog_files:
         p = Path(f)
+        logger.info("Parsing file: %s (%.1f MB)", p, p.stat().st_size / (1024 * 1024))
+        t0 = time.time()
         tree = pyslang.SyntaxTree.fromFile(str(p))
+        elapsed = time.time() - t0
         if tree is None:
             logger.warning("Failed to parse file: %s", p)
             continue
+        logger.info("  Parsed in %.1fs", elapsed)
         trees.append(tree)
 
     if not trees:
         return graph
 
+    # --- Phase 2: Compile ---
+    logger.info("Starting compilation...")
+    t0 = time.time()
     comp = pyslang.Compilation()
     for tree in trees:
         comp.addSyntaxTree(tree)
 
     # Allow unknown module instantiations (cell libraries not provided)
     # pyslang treats them as errors; we handle them via syntax-level fallback
+    diag_count = 0
     for diag in comp.getAllDiagnostics():
         logger.debug("pyslang: %s", diag)
+        diag_count += 1
+    logger.info("  Compilation done in %.1fs (%d diagnostics)", time.time() - t0, diag_count)
 
     root = comp.getRoot()
 
+    # --- Phase 3: Walk and extract gates ---
+    # Cache for _has_structural_content keyed by definition name
+    structural_cache: dict[str, bool] = {}
+    # Counter for progress logging
+    gate_counter = [0]
+
+    logger.info("Walking design hierarchy...")
+    t0 = time.time()
     for top_inst in root.topInstances:
         if top_module is not None and top_inst.name != top_module:
             continue
-        _walk_instance(top_inst, graph)
+        logger.info("  Walking top instance: %s", top_inst.name)
+        _walk_instance(top_inst, graph, structural_cache, gate_counter)
+
+    walk_elapsed = time.time() - t0
+    total_elapsed = time.time() - overall_t0
+    total_gates = len(graph._gates)
+    total_signals = len(graph._all_signals)
+    logger.info("Walk complete: %d gates, %d signals in %.1fs",
+                total_gates, total_signals, walk_elapsed)
+    logger.info("Total parse_netlist time: %.1fs", total_elapsed)
 
     return graph
 
 
-def _walk_instance(inst: pyslang.InstanceSymbol, graph: NetlistGraph) -> None:
+def _walk_instance(
+    inst: pyslang.InstanceSymbol,
+    graph: NetlistGraph,
+    structural_cache: dict[str, bool] | None = None,
+    gate_counter: list[int] | None = None,
+) -> None:
     """Recursively walk an instance and its children, extracting gates."""
+    if structural_cache is None:
+        structural_cache = {}
+    if gate_counter is None:
+        gate_counter = [0]
+
     body = inst.body
+
+    def _log_progress() -> None:
+        gate_counter[0] += 1
+        if gate_counter[0] % _PROGRESS_INTERVAL == 0:
+            logger.info("  ... processed %dK gates so far", gate_counter[0] // 1000)
 
     def visitor(sym):
         if isinstance(sym, pyslang.PrimitiveInstanceSymbol):
             _handle_primitive(sym, graph)
+            _log_progress()
             return pyslang.VisitAction.Skip
 
         if isinstance(sym, pyslang.InstanceSymbol):
             # Check if this is a leaf cell (no sub-instances / a black box)
             # or a hierarchical module we should descend into.
             child_body = sym.body
-            has_sub = _has_structural_content(child_body)
+            def_name = child_body.definition.name
+            has_sub = _has_structural_content_cached(
+                def_name, child_body, structural_cache
+            )
             if has_sub:
                 # Hierarchical module — recurse
                 return pyslang.VisitAction.Advance
             else:
                 # Leaf cell (standard cell / black box)
                 _handle_cell_instance(sym, graph)
+                _log_progress()
                 return pyslang.VisitAction.Skip
 
         if isinstance(sym, pyslang.UninstantiatedDefSymbol):
             _handle_uninstantiated(sym, graph)
+            _log_progress()
             return pyslang.VisitAction.Skip
 
         if isinstance(sym, pyslang.ContinuousAssignSymbol):
@@ -160,8 +232,25 @@ def _walk_instance(inst: pyslang.InstanceSymbol, graph: NetlistGraph) -> None:
     body.visit(visitor)
 
 
-def _has_structural_content(body: pyslang.InstanceBodySymbol) -> bool:
-    """Check if a module body contains sub-instances or primitives."""
+def _has_structural_content_cached(
+    def_name: str,
+    body: pyslang.InstanceBodySymbol,
+    cache: dict[str, bool],
+) -> bool:
+    """Check if a module body contains sub-instances or primitives (cached).
+
+    Results are cached by definition name so that repeated instances of the
+    same cell type only pay the visit cost once.  Known leaf-cell name
+    patterns are short-circuited without visiting at all.
+    """
+    if def_name in cache:
+        return cache[def_name]
+
+    # Fast path: if the name matches a known leaf-cell pattern, skip visiting
+    if _is_leaf_cell_name(def_name):
+        cache[def_name] = False
+        return False
+
     found = False
 
     def check(sym):
@@ -174,6 +263,7 @@ def _has_structural_content(body: pyslang.InstanceBodySymbol) -> bool:
         return pyslang.VisitAction.Advance
 
     body.visit(check)
+    cache[def_name] = found
     return found
 
 
@@ -221,6 +311,9 @@ def _handle_cell_instance(inst: pyslang.InstanceSymbol, graph: NetlistGraph) -> 
 
     for port in inst.body.portList:
         if not isinstance(port, pyslang.PortSymbol):
+            continue
+        # Skip power/ground ports (VDD, VSS, VNW, VPW, etc.)
+        if port.name in _PG_PORTS:
             continue
         port_names.append(port.name)
         pc = inst.getPortConnection(port)
@@ -272,8 +365,6 @@ def _handle_uninstantiated(sym: pyslang.UninstantiatedDefSymbol, graph: NetlistG
     # Known output port names for standard cells
     _OUT_PORTS = {"Y", "X", "Z", "ZN", "Q", "QN", "Q_N", "CO", "COUT", "SUM", "S",
                   "SO", "HI", "LO"}
-    # Power/ground ports to ignore (not functional connections)
-    _PG_PORTS = {"VDD", "VSS", "VNW", "VPW", "VDDPE", "VDDCE", "VSSE"}
 
     inputs: dict[str, Pin] = {}
     outputs: dict[str, Pin] = {}
@@ -320,10 +411,38 @@ def _handle_continuous_assign(sym: pyslang.ContinuousAssignSymbol, graph: Netlis
     right = assign.right
 
     lpin = _expr_to_pin(left)
+    if lpin is None:
+        logger.debug("Skipping assign with non-simple LHS: %s", sym.syntax)
+        return
+
+    # Try simple RHS first
     rpin = _expr_to_pin(right)
 
-    if lpin is None or rpin is None:
-        logger.debug("Skipping assign with non-simple expression: %s", sym.syntax)
+    if rpin is None:
+        # Complex RHS: collect all leaf signal references
+        cell_type, leaf_pins = _decompose_expr(right)
+        if not leaf_pins:
+            logger.debug("Skipping assign with no extractable inputs: %s", sym.syntax)
+            return
+        lsig = _pin_signal(lpin)
+        inst_path = f"__assign__{lsig}"
+        seen: dict[str, Pin] = {}
+        for pin in leaf_pins:
+            key = _pin_signal(pin)
+            if key not in seen:
+                seen[key] = pin
+        inputs: dict[str, Pin] = {}
+        for i, (key, pin) in enumerate(seen.items()):
+            port_name = chr(ord("A") + i) if i < 26 else f"in{i}"
+            inputs[port_name] = pin
+        gate = Gate(
+            cell_type=cell_type,
+            instance_path=inst_path,
+            inputs=inputs,
+            outputs={"Y": lpin},
+            is_sequential=False,
+        )
+        graph.add_gate(gate)
         return
 
     # Generate a unique instance path for the assign
@@ -338,6 +457,64 @@ def _handle_continuous_assign(sym: pyslang.ContinuousAssignSymbol, graph: Netlis
         is_sequential=False,
     )
     graph.add_gate(gate)
+
+
+# Mapping from pyslang BinaryOperator to cell type names
+_BINOP_TO_CELL = {
+    'BinaryAnd': 'and',
+    'BinaryOr': 'or',
+    'BinaryXor': 'xor',
+    'BinaryXnor': 'xnor',
+}
+
+
+def _decompose_expr(expr) -> tuple[str, list[Pin]]:
+    """Recursively extract leaf Pins from a complex expression.
+
+    Returns (cell_type, leaf_pins) where cell_type is an approximation of the
+    top-level operation, and leaf_pins is a flat list of all signal references.
+    For complex/mixed expressions, cell_type falls back to 'assign_expr'
+    which the gate model treats conservatively (any X input -> X output).
+    """
+    if expr is None:
+        return ('assign_expr', [])
+
+    # Conversion — unwrap
+    if isinstance(expr, pyslang.ConversionExpression):
+        return _decompose_expr(expr.operand)
+
+    # Simple leaf — delegate to _expr_to_pin
+    pin = _expr_to_pin(expr)
+    if pin is not None:
+        return ('assign', [pin])
+
+    # Binary expression (a op b)
+    if isinstance(expr, pyslang.BinaryExpression):
+        op_name = expr.op.name
+        _, left_pins = _decompose_expr(expr.left)
+        _, right_pins = _decompose_expr(expr.right)
+        all_pins = left_pins + right_pins
+        cell = _BINOP_TO_CELL.get(op_name, 'assign_expr')
+        return (cell, all_pins)
+
+    # Conditional / ternary (sel ? a : b)
+    if isinstance(expr, pyslang.ConditionalExpression):
+        all_pins: list[Pin] = []
+        for cond in expr.conditions:
+            _, cond_pins = _decompose_expr(cond.expr)
+            all_pins.extend(cond_pins)
+        _, true_pins = _decompose_expr(expr.left)
+        _, false_pins = _decompose_expr(expr.right)
+        all_pins.extend(true_pins)
+        all_pins.extend(false_pins)
+        return ('mux', all_pins)
+
+    # Unary expression (e.g. !a, ~a)
+    if isinstance(expr, pyslang.UnaryExpression):
+        return _decompose_expr(expr.operand)
+
+    logger.debug("Cannot decompose expression: %s (kind=%s)", expr.syntax, expr.kind)
+    return ('assign_expr', [])
 
 
 def _expr_to_pin(expr) -> Pin | None:
