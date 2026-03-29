@@ -36,6 +36,13 @@ _TSMC_SUFFIX_RE = re.compile(r'_X[\dP]+[BM]_A\d+PP\d+Z\w+_C\d+$', re.IGNORECASE)
 # Pattern: FUNC_X<drive><type>_<techid> where drive can be 0P5, 1, 1P4, 2, etc.
 _ARTISAN_DRIVE_SUFFIX_RE = re.compile(r'_X[\dP]+[BM]$', re.IGNORECASE)
 
+# Inverted-input suffixes used by TSMC/ARM Artisan cells:
+#   B  = one inverted input  (e.g. NAND2B → nand2 with one input inverted)
+#   XB = extra-inverted input
+#   BB = two inverted inputs
+# These suffixes appear after the digit count and before any other suffix.
+_INVERTED_INPUT_SUFFIX_RE = re.compile(r'(x?bb?|bb?)$', re.IGNORECASE)
+
 
 def strip_cell_name(cell_type: str) -> str:
     """Strip PDK prefix and drive strength suffix to get base function name.
@@ -113,6 +120,14 @@ def identify_cell(cell_type: str) -> Optional[CellInfo]:
     """Identify the cell family from cell_type string. Returns None if unknown."""
     base = strip_cell_name(cell_type)
 
+    # Strip B/XB/BB inverted-input suffixes so that e.g.
+    # nand2b → nand2, aoi21b → aoi21, or2bb → or2
+    base_stripped = _INVERTED_INPUT_SUFFIX_RE.sub('', base)
+    # Only accept the stripped version if it actually removed something
+    # and left a non-empty result
+    if base_stripped and base_stripped != base:
+        base = base_stripped
+
     # Inverter variants
     if base in ('inv', 'clkinv') or 'inv' in base and 'ao' not in base and 'oi' not in base:
         # But exclude aoi/oai patterns
@@ -186,7 +201,7 @@ def identify_cell(cell_type: str) -> Optional[CellInfo]:
         return CellInfo('tie')
 
     # Clock gate cells: cgen, cgencin, etc.
-    if base.startswith('cgen') or base.startswith('fricg'):
+    if base.startswith('cgen') or base.startswith('fricg') or base.startswith('preicg'):
         return CellInfo('clock_gate')
 
     # Sequential cells (DFF variants)

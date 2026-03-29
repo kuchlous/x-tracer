@@ -2,6 +2,7 @@
 
 import pytest
 from src.gates import GateModel
+from src.gates.cells import strip_cell_name, identify_cell
 
 
 @pytest.fixture
@@ -529,3 +530,110 @@ class TestZasX:
         """z-valued input treated as X for backward_causes."""
         result = gm.backward_causes('and', {'in0': 'z', 'in1': '1'})
         assert result == ['in0']
+
+
+# ============================================================
+# TSMC / ARM Artisan Cell Recognition
+# ============================================================
+
+class TestTSMCCellRecognition:
+    """Test strip_cell_name and identify_cell for TSMC naming variants."""
+
+    # --- strip_cell_name ---
+
+    def test_strip_tsmc_and2(self):
+        assert strip_cell_name('AND2_X1M_A9PP140ZTH_C30') == 'and2'
+
+    def test_strip_tsmc_inv(self):
+        assert strip_cell_name('INV_X0P5B_A9PP140ZTH_C35') == 'inv'
+
+    def test_strip_tsmc_nand2(self):
+        assert strip_cell_name('NAND2_X1M_A9PP140ZTL_C30') == 'nand2'
+
+    def test_strip_tsmc_aoi21(self):
+        assert strip_cell_name('AOI21_X1M_A9PP140ZTH_C30') == 'aoi21'
+
+    def test_strip_tsmc_oai22(self):
+        assert strip_cell_name('OAI22_X1M_A9PP140ZTH_C30') == 'oai22'
+
+    def test_strip_tsmc_dff(self):
+        assert strip_cell_name('DFFQ_X1M_A9PP140ZTH_C30') == 'dffq'
+
+    def test_strip_tsmc_artisan_drive_only(self):
+        assert strip_cell_name('AND2_X1M') == 'and2'
+
+    # --- identify_cell for B/XB/BB suffixed cells ---
+
+    def test_nand2b_recognized_as_nand(self):
+        info = identify_cell('NAND2B_X1M_A9PP140ZTH_C30')
+        assert info is not None
+        assert info.family == 'nand'
+        assert info.num_inputs == 2
+
+    def test_aoi21b_recognized_as_aoi(self):
+        info = identify_cell('AOI21B_X1M_A9PP140ZTH_C30')
+        assert info is not None
+        assert info.family == 'aoi'
+        assert info.groups == [2, 1]
+
+    def test_or2bb_recognized_as_or(self):
+        info = identify_cell('OR2BB_X1M_A9PP140ZTH_C30')
+        assert info is not None
+        assert info.family == 'or'
+        assert info.num_inputs == 2
+
+    def test_and2b_recognized_as_and(self):
+        info = identify_cell('AND2B_X1M_A9PP140ZTH_C30')
+        assert info is not None
+        assert info.family == 'and'
+        assert info.num_inputs == 2
+
+    def test_nor3b_recognized_as_nor(self):
+        info = identify_cell('NOR3B_X1M_A9PP140ZTH_C30')
+        assert info is not None
+        assert info.family == 'nor'
+        assert info.num_inputs == 3
+
+    def test_oai21b_recognized_as_oai(self):
+        info = identify_cell('OAI21B_X1M_A9PP140ZTH_C30')
+        assert info is not None
+        assert info.family == 'oai'
+        assert info.groups == [2, 1]
+
+    # --- PREICG clock gate ---
+
+    def test_preicg_clock_gate(self):
+        info = identify_cell('PREICG_X1M_A9PP140ZTH_C30')
+        assert info is not None
+        assert info.family == 'clock_gate'
+
+    def test_preicg_bare(self):
+        info = identify_cell('preicg')
+        assert info is not None
+        assert info.family == 'clock_gate'
+
+    # --- Multi-width DFFs ---
+
+    def test_dffqaa2w(self):
+        info = identify_cell('DFFQAA2W_X1M_A9PP140ZTH_C30')
+        assert info is not None
+        assert info.family == 'dff'
+
+    def test_dffql4w(self):
+        info = identify_cell('DFFQL4W_X1M_A9PP140ZTH_C30')
+        assert info is not None
+        assert info.family == 'dff'
+
+    # --- AO/OA families ---
+
+    def test_ao21(self):
+        info = identify_cell('AO21_X1M_A9PP140ZTH_C30')
+        assert info is not None
+        assert info.family == 'ao'
+        assert info.groups == [2, 1]
+
+    def test_oa22(self):
+        info = identify_cell('OA22_X1M_A9PP140ZTH_C30')
+        assert info is not None
+        assert info.family == 'oa'
+        assert info.groups == [2, 2]
