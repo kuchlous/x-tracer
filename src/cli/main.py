@@ -78,23 +78,62 @@ def cli(netlist, vcd, signal, query_time, output_format, max_depth, top_module, 
         click.echo(f"Error parsing netlist: {e}", err=True)
         sys.exit(1)
 
-    # Load VCD
+    # Determine netlist top module name
+    netlist_top = top_module or "unknown"
+    if netlist_top == "unknown":
+        all_netlist_sigs = graph.get_all_signals()
+        if all_netlist_sigs:
+            netlist_top = next(iter(all_netlist_sigs)).split('.')[0]
+
+    # --- Cone-based VCD loading (avoids OOM on large files) ---
     try:
-        from src.vcd import load_vcd
+        from src.vcd import load_vcd_header, load_vcd
         from src.vcd.database import PrefixMappedVCD
-        vcd_db = load_vcd(Path(vcd))
+
+        # Step 1: Parse VCD header only (fast — signal names + timescale)
+        click.echo("Parsing VCD header ...", err=True)
+        vcd_signals, timescale_fs = load_vcd_header(Path(vcd))
+        click.echo(f"VCD header: {len(vcd_signals)} signals, timescale {_format_timescale(timescale_fs)}", err=True)
+
+        # Step 2: Map query signal to netlist space for cone computation
+        if vcd_prefix:
+            # Query signal is in VCD space — map to netlist space for cone computation
+            netlist_query_sig = sig_path.replace(vcd_prefix, netlist_top, 1) if sig_path.startswith(vcd_prefix) else sig_path
+        else:
+            netlist_query_sig = sig_path
+
+        # Step 3: Compute backward cone from netlist
+        click.echo(f"Computing backward cone from '{netlist_query_sig}' (max_depth={max_depth}) ...", err=True)
+        cone_signals = graph.get_input_cone(netlist_query_sig, max_depth=max_depth)
+        click.echo(f"Backward cone: {len(cone_signals)} netlist signals", err=True)
+
+        # Step 4: Map cone signals to VCD names
+        if vcd_prefix:
+            vcd_cone = set()
+            for sig in cone_signals:
+                if sig.startswith(netlist_top + '.'):
+                    vcd_sig = vcd_prefix + sig[len(netlist_top):]
+                else:
+                    vcd_sig = sig
+                if vcd_sig in vcd_signals:
+                    vcd_cone.add(vcd_sig)
+        else:
+            vcd_cone = cone_signals & vcd_signals
+
+        # Always include the query signal itself (it's in VCD space)
+        if sig_path in vcd_signals:
+            vcd_cone.add(sig_path)
+
+        click.echo(f"Loading {len(vcd_cone)} VCD signals (of {len(vcd_signals)} total) ...", err=True)
+
+        # Step 5: Load VCD with only the cone signals filtered
+        vcd_db = load_vcd(Path(vcd), signals=vcd_cone)
     except Exception as e:
         click.echo(f"Error loading VCD: {e}", err=True)
         sys.exit(1)
 
     # Apply VCD-to-netlist path prefix mapping if specified
     if vcd_prefix:
-        netlist_top = top_module or "unknown"
-        # Auto-detect netlist top from the graph if not specified
-        if netlist_top == "unknown":
-            all_sigs = graph.get_all_signals()
-            if all_sigs:
-                netlist_top = next(iter(all_sigs)).split('.')[0]
         click.echo(f"Path mapping: VCD '{vcd_prefix}.*' -> netlist '{netlist_top}.*'", err=True)
         vcd_db = PrefixMappedVCD(vcd_db, vcd_prefix, netlist_top)
 
@@ -104,13 +143,20 @@ def cli(netlist, vcd, signal, query_time, output_format, max_depth, top_module, 
     vcd_time = vcd_db.ps_to_vcd(query_time)
     click.echo(f"Query: {sig_path}[{sig_bit}] @ {query_time} ps (VCD time: {vcd_time})", err=True)
 
-    # Check signal exists in VCD
-    if not vcd_db.has_signal(sig_path):
-        click.echo(f"Error: signal '{sig_path}' not found in VCD", err=True)
+    # Determine the signal path in netlist space (for trace_x)
+    # The user provides signal in VCD space; we need netlist space for the tracer
+    if vcd_prefix and sig_path.startswith(vcd_prefix + '.'):
+        trace_sig = netlist_top + sig_path[len(vcd_prefix):]
+    else:
+        trace_sig = sig_path
+
+    # Check signal exists in VCD (uses VCD-space via PrefixMappedVCD)
+    if not vcd_db.has_signal(trace_sig):
+        click.echo(f"Error: signal '{trace_sig}' not found in VCD", err=True)
         sys.exit(1)
 
     # Check signal is X at query time
-    val = vcd_db.get_bit(sig_path, sig_bit, vcd_time)
+    val = vcd_db.get_bit(trace_sig, sig_bit, vcd_time)
     if val != 'x':
         click.echo(
             f"Signal is not X at time {query_time} ps (value={val})",
@@ -118,14 +164,14 @@ def cli(netlist, vcd, signal, query_time, output_format, max_depth, top_module, 
         )
         sys.exit(1)
 
-    # Run tracer
+    # Run tracer (in netlist space — PrefixMappedVCD handles VCD translation)
     from src.tracer import trace_x
     from src.gates import GateModel
 
     gate_model = GateModel()
     try:
         result = trace_x(graph, vcd_db, gate_model,
-                         sig_path, sig_bit, vcd_time,
+                         trace_sig, sig_bit, vcd_time,
                          max_depth=max_depth)
     except Exception as e:
         click.echo(f"Error during trace: {e}", err=True)
