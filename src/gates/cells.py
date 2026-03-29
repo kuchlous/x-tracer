@@ -30,11 +30,11 @@ _DRIVE_SUFFIX = re.compile(r'_\d+$')
 # Examples: AND2_X1M_A9PP140ZTH_C30, INV_X0P5B_A9PP140ZTH_C35
 # The tech suffix matches: _A9PP140Z<vt>_C<corner>
 # Also handles other TSMC families: A9PP140ZTL, A9PP140ZTS, A9PP140ZTUH
-_TSMC_SUFFIX_RE = re.compile(r'_X[\dP]+[BM]_A\d+PP\d+Z\w+_C\d+$', re.IGNORECASE)
+_TSMC_SUFFIX_RE = re.compile(r'_X[\dP]+[A-Z]_A\d+PP\d+Z\w+_C\d+$', re.IGNORECASE)
 
 # Generic Artisan-style: strip drive strength + tech suffix
 # Pattern: FUNC_X<drive><type>_<techid> where drive can be 0P5, 1, 1P4, 2, etc.
-_ARTISAN_DRIVE_SUFFIX_RE = re.compile(r'_X[\dP]+[BM]$', re.IGNORECASE)
+_ARTISAN_DRIVE_SUFFIX_RE = re.compile(r'_X[\dP]+[A-Z]$', re.IGNORECASE)
 
 # Inverted-input suffixes used by TSMC/ARM Artisan cells:
 #   B  = one inverted input  (e.g. NAND2B → nand2 with one input inverted)
