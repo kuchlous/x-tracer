@@ -364,7 +364,7 @@ def _handle_uninstantiated(sym: pyslang.UninstantiatedDefSymbol, graph: NetlistG
 
     # Known output port names for standard cells
     _OUT_PORTS = {"Y", "X", "Z", "ZN", "Q", "QN", "Q_N", "CO", "COUT", "SUM", "S",
-                  "SO", "HI", "LO"}
+                  "SO", "HI", "LO", "ECK", "ck_out", "Q0", "Q1", "QN0", "QN1"}
 
     inputs: dict[str, Pin] = {}
     outputs: dict[str, Pin] = {}

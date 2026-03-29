@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+from collections import deque
 from pathlib import Path
 
 from .gate import Gate, Pin
@@ -26,8 +27,8 @@ _PROGRESS_INTERVAL = 500_000
 
 _OUTPUT_PORTS = frozenset({
     "Y", "Z", "ZN", "Q", "QN", "Q_N", "CO", "COUT", "SUM", "S",
-    "SO", "HI", "LO", "ECK",
-    "Q0", "Q1", "Q2", "Q3",
+    "SO", "HI", "LO", "ECK", "ck_out",
+    "Q0", "Q1", "Q2", "Q3", "QN0", "QN1",
 })
 
 _PG_PORTS = frozenset({
@@ -145,25 +146,186 @@ def _parse_assign(line: str, mod_prefix: str, graph_add_gate) -> None:
     graph_add_gate(g)
 
 
+def _collect_defined_modules(verilog_files: list[Path]) -> set[str]:
+    """Pass 1: Quickly scan all files to collect the set of defined module names.
+
+    This is needed to distinguish sub-module instantiations from leaf cell
+    instantiations during Pass 2.
+    """
+    defined = set()
+    for p in verilog_files:
+        with open(p, 'r', errors='replace', buffering=1024 * 1024) as f:
+            for line in f:
+                stripped = line.strip()
+                if stripped.startswith('module '):
+                    rest = stripped[7:]
+                    end = 0
+                    rlen = len(rest)
+                    while end < rlen and rest[end] not in ' \t\n\r(;':
+                        end += 1
+                    defined.add(rest[:end])
+    return defined
+
+
+def _build_hierarchy_mapping(
+    defined_modules: set[str],
+    submodule_insts: dict[str, list[tuple[str, str]]],
+    top_module: str | None,
+) -> dict[str, str]:
+    """Build module_name -> full_instance_path mapping via BFS from the top module.
+
+    Args:
+        defined_modules: Set of all module names defined in the netlist.
+        submodule_insts: parent_module -> [(instance_name, child_module), ...]
+        top_module: Name of the top-level module.  If None, auto-detect by
+                    finding a module that is never instantiated as a child.
+
+    Returns:
+        Mapping from module_name to its full hierarchical instance path.
+        E.g. {'top': 'top', 'sub_mod_A': 'top.inst_a', ...}
+    """
+    if not submodule_insts:
+        return {}
+
+    # Auto-detect top module if not provided
+    if top_module is None:
+        all_children = set()
+        for children in submodule_insts.values():
+            for _, child_mod in children:
+                all_children.add(child_mod)
+        candidates = defined_modules - all_children
+        # Among candidates, prefer ones that have sub-module instantiations
+        parents_with_children = candidates & set(submodule_insts.keys())
+        if parents_with_children:
+            top_module = max(parents_with_children,
+                            key=lambda m: len(submodule_insts.get(m, [])))
+        elif candidates:
+            top_module = next(iter(candidates))
+        else:
+            # All modules are instantiated; pick the one with most children
+            top_module = max(submodule_insts.keys(),
+                            key=lambda m: len(submodule_insts[m]))
+
+    logger.info("Hierarchy mapping: top module = %s", top_module)
+
+    # BFS from top_module
+    mapping: dict[str, str] = {top_module: top_module}
+    queue: deque[str] = deque([top_module])
+
+    while queue:
+        parent_mod = queue.popleft()
+        parent_path = mapping[parent_mod]
+        for inst_name, child_mod in submodule_insts.get(parent_mod, []):
+            if child_mod not in mapping:
+                child_path = parent_path + '.' + inst_name
+                mapping[child_mod] = child_path
+                queue.append(child_mod)
+
+    logger.info("Hierarchy mapping: %d modules mapped out of %d defined",
+                len(mapping), len(defined_modules))
+    return mapping
+
+
+def _remap_graph_hierarchy(graph: NetlistGraph,
+                           module_to_path: dict[str, str]) -> None:
+    """Remap all gate instance_paths and signal paths in-place.
+
+    For each gate whose instance_path starts with a known module name,
+    replace the module name prefix with the hierarchical instance path.
+    Also remap all Pin.signal values and rebuild the graph's signal maps.
+
+    Uses O(1) dict lookup per path by extracting the module prefix
+    (everything before the first dot) and checking the mapping.
+    """
+    if not module_to_path:
+        return
+
+    t0 = time.time()
+
+    # Build prefix replacement map: "module_name." -> "instance_path."
+    # Only include entries where the mapping actually changes the path
+    prefix_map: dict[str, str] = {}
+    for mod_name, inst_path in module_to_path.items():
+        if mod_name != inst_path:
+            prefix_map[mod_name] = inst_path
+
+    if not prefix_map:
+        return
+
+    def remap_path(path: str) -> str:
+        """Replace the module-name prefix using O(1) dict lookup."""
+        dot_idx = path.find('.')
+        if dot_idx == -1:
+            new = prefix_map.get(path)
+            return new if new is not None else path
+        module_part = path[:dot_idx]
+        new_prefix = prefix_map.get(module_part)
+        if new_prefix is not None:
+            return new_prefix + path[dot_idx:]
+        return path
+
+    # --- Remap all gates ---
+    old_gates = graph._gates
+    new_gates: dict[str, Gate] = {}
+    count = 0
+
+    for gate in old_gates.values():
+        gate.instance_path = remap_path(gate.instance_path)
+        for pin in gate.inputs.values():
+            pin.signal = remap_path(pin.signal)
+        for pin in gate.outputs.values():
+            pin.signal = remap_path(pin.signal)
+        new_gates[gate.instance_path] = gate
+        count += 1
+        if count % 500000 == 0:
+            logger.info("  ... remapped %dK gates", count // 1000)
+
+    # --- Rebuild the graph signal maps ---
+    from collections import defaultdict
+    graph._gates = new_gates
+    graph._signal_to_drivers = defaultdict(list)
+    graph._signal_to_fanout = defaultdict(list)
+    graph._all_signals = set()
+
+    for gate in new_gates.values():
+        graph.add_gate_fast(gate)
+
+    elapsed = time.time() - t0
+    logger.info("Hierarchy remapping complete in %.1fs (%d gates)", elapsed, count)
+
+
 def parse_netlist_fast(
     verilog_files: list[Path] | list[str],
     top_module: str | None = None,
 ) -> NetlistGraph:
     """Parse flat post-P&R Verilog netlists using fast regex-based parsing.
 
-    Single-pass line-by-line processing. Designed for Innovus output
-    with 68K+ sub-modules and millions of cell instances.
+    Two-pass processing for flat netlists with sub-module hierarchy:
+      Pass 1: Collect all defined module names.
+      Pass 2: Parse cell instantiations, tracking sub-module instances.
+      Post: Build hierarchy mapping and remap paths to match VCD hierarchy.
 
     Args:
         verilog_files: Paths to Verilog source files.
-        top_module: Name of the top module (unused currently, kept for API compat).
+        top_module: Name of the top module. Auto-detected if None.
 
     Returns:
         A NetlistGraph with all gates and connectivity.
     """
     overall_t0 = time.time()
+
+    # --- Pass 1: Collect all defined module names ---
+    paths = [Path(vf) for vf in verilog_files]
+    defined_modules = _collect_defined_modules(paths)
+    logger.info("Pass 1 complete: %d modules defined", len(defined_modules))
+
+    # --- Pass 2: Parse cell instantiations ---
     graph = NetlistGraph()
     gate_count = 0
+
+    # Track sub-module instantiations for hierarchy mapping:
+    # parent_module -> [(instance_name, child_module), ...]
+    submodule_insts: dict[str, list[tuple[str, str]]] = {}
 
     # Local refs for hot loop -- avoids global/attribute lookups
     output_ports = _OUTPUT_PORTS
@@ -231,6 +393,14 @@ def parse_netlist_fast(
                         inst_name = inst_name[1:]
 
                     inst_path = current_module + '.' + inst_name
+
+                    # Track sub-module instantiations for hierarchy mapping
+                    if cell_type in defined_modules:
+                        if current_module not in submodule_insts:
+                            submodule_insts[current_module] = []
+                        submodule_insts[current_module].append(
+                            (inst_name, cell_type))
+
                     conns = port_conn_findall(full_stmt)
 
                     inputs: dict[str, Pin] = {}
@@ -373,6 +543,14 @@ def parse_netlist_fast(
                             inst_name = inst_name[1:]
 
                         inst_path = current_module + '.' + inst_name
+
+                        # Track sub-module instantiations for hierarchy mapping
+                        if cell_type in defined_modules:
+                            if current_module not in submodule_insts:
+                                submodule_insts[current_module] = []
+                            submodule_insts[current_module].append(
+                                (inst_name, cell_type))
+
                         conns = port_conn_findall(stripped)
 
                         inputs = {}
@@ -468,6 +646,13 @@ def parse_netlist_fast(
 
         elapsed = time.time() - t0
         logger.info("  Parsed in %.1fs", elapsed)
+
+    # --- Post-parse: Build hierarchy mapping and remap paths ---
+    if submodule_insts:
+        module_to_path = _build_hierarchy_mapping(
+            defined_modules, submodule_insts, top_module)
+        if module_to_path:
+            _remap_graph_hierarchy(graph, module_to_path)
 
     total_elapsed = time.time() - overall_t0
     total_gates = len(graph._gates)

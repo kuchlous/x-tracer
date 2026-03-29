@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from src.netlist import Gate, Pin, NetlistGraph, parse_netlist
+from src.netlist.fast_parser import parse_netlist_fast
 
 
 def _parse_verilog(code: str) -> NetlistGraph:
@@ -14,6 +15,14 @@ def _parse_verilog(code: str) -> NetlistGraph:
         f.write(code)
         f.flush()
         return parse_netlist([Path(f.name)])
+
+
+def _parse_verilog_fast(code: str, top_module: str | None = None) -> NetlistGraph:
+    """Helper: write Verilog to a temp file and parse with fast parser."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".v", delete=False) as f:
+        f.write(code)
+        f.flush()
+        return parse_netlist_fast([Path(f.name)], top_module=top_module)
 
 
 class TestSimpleAnd:
@@ -286,3 +295,179 @@ endmodule
         assert graph.get_gate("top.u1").cell_type == "nand"
         assert graph.get_gate("top.u2").cell_type == "nor"
         assert graph.get_gate("top.u3").cell_type == "xor"
+
+
+class TestHierarchyMapping:
+    """Test hierarchy remapping for flat post-P&R netlists."""
+
+    # Simulates a flat netlist: top -> sub_a (inst u_a) -> sub_b (inst u_b)
+    # Each sub-module has leaf cells inside.
+    VERILOG = """\
+module sub_b(input x, output y);
+  wire n;
+  and leaf1(.A(x), .Y(n));
+  or  leaf2(.A(n), .Y(y));
+endmodule
+
+module sub_a(input a, output b);
+  wire w;
+  and gate1(.A(a), .Y(w));
+  sub_b u_b(.x(w), .y(b));
+endmodule
+
+module mytop(input in1, output out1);
+  wire m;
+  sub_a u_a(.a(in1), .b(out1));
+  and top_gate(.A(in1), .Y(m));
+endmodule
+"""
+
+    @pytest.fixture
+    def graph(self):
+        return _parse_verilog_fast(self.VERILOG, top_module="mytop")
+
+    def test_top_gate_remapped(self, graph):
+        """Top-level gates should keep their mytop prefix."""
+        gate = graph.get_gate("mytop.top_gate")
+        assert gate is not None
+        assert gate.cell_type == "and"
+
+    def test_sub_a_leaf_gate_remapped(self, graph):
+        """Gates inside sub_a should have instance path mytop.u_a.gate1."""
+        gate = graph.get_gate("mytop.u_a.gate1")
+        assert gate is not None
+        assert gate.cell_type == "and"
+
+    def test_sub_b_leaf_gate_remapped(self, graph):
+        """Gates inside sub_b should have instance path mytop.u_a.u_b.leaf1."""
+        gate = graph.get_gate("mytop.u_a.u_b.leaf1")
+        assert gate is not None
+        assert gate.cell_type == "and"
+
+        gate2 = graph.get_gate("mytop.u_a.u_b.leaf2")
+        assert gate2 is not None
+        assert gate2.cell_type == "or"
+
+    def test_signal_paths_remapped(self, graph):
+        """Signal paths inside sub-modules should use instance paths."""
+        gate = graph.get_gate("mytop.u_a.gate1")
+        # Input signal was 'sub_a.a', should be remapped to 'mytop.u_a.a'
+        assert gate.inputs["A"].signal == "mytop.u_a.a"
+        # Output signal was 'sub_a.w', should be remapped to 'mytop.u_a.w'
+        assert gate.outputs["Y"].signal == "mytop.u_a.w"
+
+    def test_deep_signal_paths_remapped(self, graph):
+        """Signal paths in deeply nested modules should be fully remapped."""
+        gate = graph.get_gate("mytop.u_a.u_b.leaf1")
+        assert gate.inputs["A"].signal == "mytop.u_a.u_b.x"
+        assert gate.outputs["Y"].signal == "mytop.u_a.u_b.n"
+
+    def test_drivers_by_remapped_signal(self, graph):
+        """get_drivers should work with remapped signal paths."""
+        drivers = graph.get_drivers("mytop.u_a.u_b.n")
+        assert len(drivers) == 1
+        assert drivers[0].instance_path == "mytop.u_a.u_b.leaf1"
+
+    def test_fanout_by_remapped_signal(self, graph):
+        """get_fanout should work with remapped signal paths."""
+        fanout = graph.get_fanout("mytop.u_a.u_b.n")
+        assert len(fanout) == 1
+        assert fanout[0].instance_path == "mytop.u_a.u_b.leaf2"
+
+    def test_input_cone_remapped(self, graph):
+        """Input cone should work through remapped hierarchy."""
+        cone = graph.get_input_cone("mytop.u_a.u_b.y")
+        assert "mytop.u_a.u_b.y" in cone
+        assert "mytop.u_a.u_b.n" in cone
+        assert "mytop.u_a.u_b.x" in cone
+
+    def test_submodule_instantiation_gate_exists(self, graph):
+        """Sub-module instantiation itself should also be a gate (for port mapping)."""
+        gate = graph.get_gate("mytop.u_a")
+        assert gate is not None
+        assert gate.cell_type == "sub_a"
+
+
+class TestHierarchyAutoDetectTop:
+    """Test auto-detection of top module when top_module is None."""
+
+    VERILOG = """\
+module child(input a, output y);
+  and g1(.A(a), .Y(y));
+endmodule
+
+module parent(input x, output z);
+  child u_child(.a(x), .y(z));
+endmodule
+"""
+
+    @pytest.fixture
+    def graph(self):
+        return _parse_verilog_fast(self.VERILOG, top_module=None)
+
+    def test_auto_detect_remaps(self, graph):
+        """With auto-detect, parent should be top; child gates remapped."""
+        gate = graph.get_gate("parent.u_child.g1")
+        assert gate is not None
+        assert gate.cell_type == "and"
+        assert gate.inputs["A"].signal == "parent.u_child.a"
+
+
+class TestHierarchyNoSubModules:
+    """Test that flat netlists without sub-modules are unaffected."""
+
+    VERILOG = """\
+module flat_top(input a, input b, output y);
+  and u1(.A(a), .B(b), .Y(y));
+endmodule
+"""
+
+    @pytest.fixture
+    def graph(self):
+        return _parse_verilog_fast(self.VERILOG)
+
+    def test_no_remapping(self, graph):
+        """Without sub-modules, paths should stay the same."""
+        gate = graph.get_gate("flat_top.u1")
+        assert gate is not None
+        assert gate.inputs["A"].signal == "flat_top.a"
+        assert gate.outputs["Y"].signal == "flat_top.y"
+
+
+class TestHierarchyMangledNames:
+    """Test with mangled module names like Innovus output."""
+
+    VERILOG = """\
+module soc_toparachne_amni_wdata_fmt_DW9(input din, output dout);
+  wire n1;
+  and RC_CG_HIER_INST12(.A(din), .Y(n1));
+  or  U42(.A(n1), .Y(dout));
+endmodule
+
+module soc_top(input clk, output data);
+  wire w;
+  soc_toparachne_amni_wdata_fmt_DW9 u_wdata_formatter(.din(clk), .dout(data));
+endmodule
+"""
+
+    @pytest.fixture
+    def graph(self):
+        return _parse_verilog_fast(self.VERILOG, top_module="soc_top")
+
+    def test_mangled_module_remapped(self, graph):
+        """Mangled module name should be replaced with instance path."""
+        gate = graph.get_gate("soc_top.u_wdata_formatter.RC_CG_HIER_INST12")
+        assert gate is not None
+        assert gate.cell_type == "and"
+
+    def test_mangled_signal_remapped(self, graph):
+        """Signals inside mangled module should use instance path."""
+        gate = graph.get_gate("soc_top.u_wdata_formatter.RC_CG_HIER_INST12")
+        assert gate.inputs["A"].signal == "soc_top.u_wdata_formatter.din"
+        assert gate.outputs["Y"].signal == "soc_top.u_wdata_formatter.n1"
+
+    def test_driver_lookup_remapped(self, graph):
+        """Signal lookup should work with the remapped path."""
+        drivers = graph.get_drivers("soc_top.u_wdata_formatter.n1")
+        assert len(drivers) == 1
+        assert drivers[0].instance_path == "soc_top.u_wdata_formatter.RC_CG_HIER_INST12"
