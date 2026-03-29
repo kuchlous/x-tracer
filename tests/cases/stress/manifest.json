@@ -1,0 +1,53 @@
+{
+  "id": "stress_lfsr_grid_8x8x8x8x32",
+  "category": "stress",
+  "generation": "manual",
+  "netlist": {
+    "file": "netlist.v",
+    "level": "gate"
+  },
+  "vcd": "sim.vcd",
+  "testbench": "tb.v",
+  "sim_env": {
+    "simulator": "iverilog",
+    "version": "12.0",
+    "timescale": "1ns/1ps",
+    "compile_flags": "-g2012"
+  },
+  "timing": {
+    "clock_period_ticks": 10000,
+    "clock_edge": "posedge"
+  },
+  "design": {
+    "block_rows": 8,
+    "block_cols": 8,
+    "stages_per_cluster": 8,
+    "lanes_per_stage": 8,
+    "lfsr_width": 32,
+    "total_ffs": 131072,
+    "estimated_signals": 1000000,
+    "hierarchy_depth": 6,
+    "description": "8x8 grid of clusters, each containing 8x8 pipeline of 32-bit LFSRs built from gate primitives and generate loops. Escaped names throughout."
+  },
+  "query": {
+    "signal": "tb.dut.final_out[0]",
+    "time": 4075000
+  },
+  "x_injection": {
+    "method": "force",
+    "target": "tb.dut.inject_data[0]",
+    "value": "1'bx",
+    "time": 1075000,
+    "injection_class": "primary_input"
+  },
+  "expected": {
+    "injection_target": "tb.dut.inject_data[0]",
+    "injection_time": 1075000,
+    "query_signal": "tb.dut.final_out[0]",
+    "query_time": 4075000,
+    "injection_class": "primary_input",
+    "max_output": 1000
+  },
+  "status": "golden",
+  "author": "manual"
+}
