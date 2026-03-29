@@ -228,7 +228,7 @@ def load_vcd(vcd_path: Path | str, signals: set[str] | None = None) -> VCDDataba
     try:
         from .pywellen_backend import load as _load_pywellen
         return _load_pywellen(vcd_path, signals)
-    except ImportError:
+    except BaseException:
         pass
 
     from .pyvcd_backend import load as _load_pyvcd

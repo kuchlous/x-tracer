@@ -63,7 +63,8 @@ def trace_x(
 
     # Warn if signal has no netlist coverage
     drivers = _get_drivers(netlist, signal, bit)
-    if not drivers and signal not in netlist.get_all_signals():
+    sig_key = f"{signal}[{bit}]"
+    if not drivers and signal not in netlist.get_all_signals() and sig_key not in netlist.get_all_signals():
         raise ValueError(
             f"Signal '{signal}' found in VCD but not in the netlist. "
             f"The netlist hierarchy may not match the VCD hierarchy. "

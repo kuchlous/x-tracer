@@ -152,23 +152,6 @@ class TestEdgeCases:
 
 # --- Bulk tests ---
 
-# Collect parseable multibit cases
-_PARSEABLE_MULTIBIT = []
-if (CASES_DIR / "multibit").exists():
-    for d in sorted((CASES_DIR / "multibit").iterdir()):
-        name = d.name
-        # Skip cases using complex expressions the parser can't handle:
-        # concat, interleave, mux use unsupported Verilog constructs
-        if any(kw in name for kw in ("concat", "interleave", "mux")):
-            continue
-        # Skip masked reduction cases: query is on primary input bus bit
-        # which triggers a false-positive validation error in the tracer
-        # (base signal not in netlist, only bit-indexed version is)
-        if "masked" in name:
-            continue
-        _PARSEABLE_MULTIBIT.append(name)
-
-
 class TestBulk:
     @pytest.mark.parametrize("case_name", [
         d.name for d in sorted((CASES_DIR / "gates").iterdir())
@@ -182,7 +165,10 @@ class TestBulk:
             f"not in leaves: {_leaf_sig_keys(result)}"
         )
 
-    @pytest.mark.parametrize("case_name", _PARSEABLE_MULTIBIT)
+    @pytest.mark.parametrize("case_name", [
+        d.name for d in sorted((CASES_DIR / "multibit").iterdir())
+        if (d / "manifest.json").exists()
+    ] if (CASES_DIR / "multibit").exists() else [])
     def test_multibit_bulk(self, case_name):
         case_dir = CASES_DIR / "multibit" / case_name
         result, manifest = _run_case(case_dir)
@@ -191,17 +177,11 @@ class TestBulk:
             f"not in leaves: {_leaf_sig_keys(result)}"
         )
 
-    # RTL-level structural cases that use assign expressions or behavioral
-    # always blocks — not valid gate-level netlist inputs for x-tracer
-    _RTL_STRUCTURAL = set()  # All cases rewritten to structural gate-level
-
     @pytest.mark.parametrize("case_name", [
         d.name for d in sorted((CASES_DIR / "structural").iterdir())
         if (d / "manifest.json").exists()
     ] if (CASES_DIR / "structural").exists() else [])
     def test_structural_gate_level(self, case_name):
-        if case_name in self._RTL_STRUCTURAL:
-            pytest.skip("RTL-level testcase, not a gate-level netlist")
         case_dir = CASES_DIR / "structural" / case_name
         result, manifest = _run_case(case_dir)
         assert _verify_injection_target(result, manifest), (
