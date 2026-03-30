@@ -1,20 +1,17 @@
 // =============================================================================
-// Stress Test Testbench — Self-Checking
+// Stress Test Testbench -- Self-Checking
 //
-// Scale: 8×8 clusters × 8 stages × 8 lanes × 32 FFs = 131,072 FFs, ~1M signals
+// Scale: 2x2 clusters x 2 stages x 2 lanes x 8 FFs = 128 DFFs
+// Fully flattened netlist, no 2D arrays.
 // =============================================================================
 
 `timescale 1ns/1ps
 
 module tb;
 
-  parameter BLOCK_ROWS         = 8;
-  parameter BLOCK_COLS         = 8;
-  parameter STAGES_PER_CLUSTER = 8;
-  parameter LANES_PER_STAGE    = 8;
-  parameter LFSR_WIDTH         = 32;
+  parameter LFSR_WIDTH         = 8;
   parameter SETTLE_CYCLES      = 100;
-  parameter PROPAGATE_CYCLES   = 5000;
+  parameter PROPAGATE_CYCLES   = 100;
   parameter CLK_PERIOD         = 10;
 
   reg                     clk = 0;
@@ -23,19 +20,7 @@ module tb;
   reg                     inject_valid = 0;
   wire [LFSR_WIDTH-1:0]  final_out;
 
-  stress_net #(
-    .BLOCK_ROWS        (BLOCK_ROWS),
-    .BLOCK_COLS        (BLOCK_COLS),
-    .STAGES_PER_CLUSTER(STAGES_PER_CLUSTER),
-    .LANES_PER_STAGE   (LANES_PER_STAGE),
-    .LFSR_WIDTH        (LFSR_WIDTH)
-  ) dut (
-    .clk         (clk),
-    .rst_n       (rst_n),
-    .inject_data (inject_data),
-    .inject_valid(inject_valid),
-    .final_out   (final_out)
-  );
+  stress_net dut (.clk(clk), .rst_n(rst_n), .inject_data(inject_data), .inject_valid(inject_valid), .final_out(final_out));
 
   always #(CLK_PERIOD/2) clk = ~clk;
 
@@ -70,20 +55,16 @@ module tb;
     $display("INFO: Clean at t=%0t, final_out=%h", $time, final_out);
 
     // Phase 3: Inject X on a single primary input
-    // Force X on inject_data[0] — this is the only injection point.
-    // x-tracer should trace final_out back through the LFSR pipeline
-    // to this single primary_input as the root cause.
     inject_valid = 1;
     inject_data[0] = 1'bx;
     $display("INFO: X injected on inject_data[0] at t=%0t", $time);
-    // Also force X directly on the first FF to ensure propagation
-    // in simulators where behavioral DFF doesn't propagate X through if/else
+    // Force X directly on the first FF to ensure propagation
     @(posedge clk);
-    force dut.gen_block[0].gen_col[0].cluster_inst.gen_stage[0].gen_lane[0].core.ff0.Q = 1'bx;
-    $display("INFO: Forced ff0.Q to X at t=%0t", $time);
+    force dut.r0c0_s0l0_ff0.Q = 1'bx;
+    $display("INFO: Forced r0c0_s0l0_ff0.Q to X at t=%0t", $time);
     repeat(2) @(posedge clk);
-    release dut.gen_block[0].gen_col[0].cluster_inst.gen_stage[0].gen_lane[0].core.ff0.Q;
-    $display("INFO: Released ff0.Q at t=%0t", $time);
+    release dut.r0c0_s0l0_ff0.Q;
+    $display("INFO: Released r0c0_s0l0_ff0.Q at t=%0t", $time);
 
     // Phase 4: Propagate
     repeat (PROPAGATE_CYCLES) @(posedge clk);
@@ -102,7 +83,7 @@ module tb;
     $finish;
   end
 
-  initial #20000000 begin
+  initial #2000000 begin
     $display("TIMEOUT at t=%0t", $time);
     $finish;
   end

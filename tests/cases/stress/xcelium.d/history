@@ -1,0 +1,5 @@
+//
+// File created by:  xrun
+// Do not modify this file
+
+s1::(30Mar2026:06:42:10):( xrun -access +rwc -xprop F netlist.v tb.v -timescale 1ns/1ps )&&(./xcelium.d/env.d/env.history.30Mar2026_06_42_10)

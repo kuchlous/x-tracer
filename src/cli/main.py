@@ -103,8 +103,16 @@ def cli(netlist, vcd, signal, query_time, output_format, max_depth, top_module, 
             netlist_query_sig = sig_path
 
         # Step 3: Compute backward cone from netlist
+        # Try bus-level signal first, then bit-indexed if bus-level has no drivers
         click.echo(f"Computing backward cone from '{netlist_query_sig}' (max_depth={max_depth}) ...", err=True)
         cone_signals = graph.get_input_cone(netlist_query_sig, max_depth=max_depth)
+        if len(cone_signals) <= 1:
+            # Bus-level signal not in netlist; try bit-indexed version
+            bit_sig = f"{netlist_query_sig}[{sig_bit}]"
+            cone_bit = graph.get_input_cone(bit_sig, max_depth=max_depth)
+            if len(cone_bit) > len(cone_signals):
+                click.echo(f"  (using bit-indexed signal '{bit_sig}')", err=True)
+                cone_signals = cone_bit
         click.echo(f"Backward cone: {len(cone_signals)} netlist signals", err=True)
 
         # Step 4: Map cone signals to VCD names

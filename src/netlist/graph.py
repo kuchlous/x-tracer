@@ -81,20 +81,38 @@ class NetlistGraph:
         """Return set of all signal paths in the netlist."""
         return set(self._all_signals)
 
-    def get_input_cone(self, signal: str) -> set[str]:
-        """Return all signals in the backward cone of the given signal."""
+    def get_input_cone(self, signal: str, max_depth: int | None = None) -> set[str]:
+        """Return all signals in the backward cone of the given signal.
+
+        Args:
+            signal: starting signal path
+            max_depth: maximum traversal depth (None = unlimited)
+
+        Returns:
+            Set of all signal paths reachable by backward traversal.
+        """
         visited: set[str] = set()
-        stack = [signal]
-        while stack:
-            sig = stack.pop()
+        # BFS with depth tracking
+        from collections import deque
+        queue: deque[tuple[str, int]] = deque()
+        queue.append((signal, 0))
+        while queue:
+            sig, depth = queue.popleft()
             if sig in visited:
                 continue
+            if max_depth is not None and depth > max_depth:
+                continue
             visited.add(sig)
-            for gate in self._signal_to_drivers.get(sig, []):
+            # Try exact signal first, then base signal without bit index
+            drivers = self._signal_to_drivers.get(sig, [])
+            if not drivers and '[' in sig:
+                base_sig = sig[:sig.rindex('[')]
+                drivers = self._signal_to_drivers.get(base_sig, [])
+            for gate in drivers:
                 for pin in gate.inputs.values():
                     inp_sig = _pin_signal(pin)
                     if inp_sig not in visited:
-                        stack.append(inp_sig)
+                        queue.append((inp_sig, depth + 1))
         return visited
 
 

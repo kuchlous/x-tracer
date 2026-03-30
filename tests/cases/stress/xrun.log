@@ -1,0 +1,71 @@
+xrun(64): 24.09-s004: (c) Copyright 1995-2024 Cadence Design Systems, Inc.
+TOOL:	xrun(64)	24.09-s004: Started on Mar 30, 2026 at 06:42:10 IST
+xrun
+	-access +rwc
+	-xprop F
+	netlist.v
+	tb.v
+	-timescale 1ns/1ps
+file: netlist.v
+	module worklib.dff_r:v
+		errors: 0, warnings: 0
+	module worklib.xor2_g:v
+		errors: 0, warnings: 0
+	module worklib.xor4_g:v
+		errors: 0, warnings: 0
+	module worklib.and2_g:v
+		errors: 0, warnings: 0
+	module worklib.stress_net:v
+		errors: 0, warnings: 0
+file: tb.v
+	module worklib.tb:v
+		errors: 0, warnings: 0
+		Caching library 'worklib' ....... Done
+	Elaborating the design hierarchy:
+	Top level design units:
+		tb
+	Building instance overlay tables: .................... Done
+	Generating native compiled code:
+		worklib.dff_r:v <0x7a7f5849>
+			streams:   3, words:  1687
+		worklib.xor2_g:v <0x7200444a>
+			streams:   0, words:     0
+		worklib.and2_g:v <0x19656169>
+			streams:   0, words:     0
+		worklib.xor4_g:v <0x7cddf2a8>
+			streams:   0, words:     0
+		worklib.stress_net:v <0x47b26a6a>
+			streams:   2, words:  2011
+		worklib.tb:v <0x4e053281>
+			streams:  13, words: 16307
+		worklib.dff_r:v <0x1afd9d9f>
+			streams:   4, words:  1883
+	Building instance specific data structures.
+	Loading native compiled code:     .................... Done
+xmelab: *W,XPWDIS: There are blocks in the design which have not been enabled for Xprop. To understand the details, user is recommended to run with -xverbose switch at elaboration.
+	Design hierarchy summary:
+		                 Instances  Unique
+		Modules:               402       6
+		Registers:             135       8
+		Scalar wires:          751       -
+		Vectored wires:          1       -
+		Always blocks:         129       2
+		Initial blocks:        135       8
+		Cont. assignments:       2     351
+		Pseudo assignments:      4       -
+		Process Clocks:        128       1
+		Simulation timescale:  1ps
+	Writing initial simulation snapshot: worklib.tb:v
+Loading snapshot worklib.tb:v .................... Done
+This snapshot is X-propagation enabled.
+xcelium> source /tools/Cadence_install/XCELIUM2409/tools/xcelium/files/xmsimrc
+xcelium> run
+INFO: Clean at t=1075000, final_out=00
+INFO: X injected on inject_data[0] at t=1075000
+INFO: Forced r0c0_s0l0_ff0.Q to X at t=1085000
+INFO: Released r0c0_s0l0_ff0.Q at t=1105000
+PASS: final_out has X at t=2105000, val=xxxxxxxx
+Simulation complete via $finish(1) at time 2205 NS + 0
+./tb.v:89     $finish;
+xcelium> exit
+TOOL:	xrun(64)	24.09-s004: Exiting on Mar 30, 2026 at 06:42:11 IST  (total: 00:00:01)

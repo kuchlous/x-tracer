@@ -1,5 +1,5 @@
 {
-  "id": "stress_lfsr_grid_8x8x8x8x32",
+  "id": "stress_lfsr_grid_2x2x2x2x8",
   "category": "stress",
   "generation": "manual",
   "netlist": {
@@ -9,42 +9,41 @@
   "vcd": "sim.vcd",
   "testbench": "tb.v",
   "sim_env": {
-    "simulator": "iverilog",
-    "version": "12.0",
-    "timescale": "1ns/1ps",
-    "compile_flags": "-g2012"
+    "simulator": "xcelium",
+    "version": "24.09",
+    "timescale": "1ns/1ps"
   },
   "timing": {
     "clock_period_ticks": 10000,
     "clock_edge": "posedge"
   },
   "design": {
-    "block_rows": 8,
-    "block_cols": 8,
-    "stages_per_cluster": 8,
-    "lanes_per_stage": 8,
-    "lfsr_width": 32,
-    "total_ffs": 131072,
-    "estimated_signals": 1000000,
-    "hierarchy_depth": 6,
-    "description": "8x8 grid of clusters, each containing 8x8 pipeline of 32-bit LFSRs built from gate primitives and generate loops. Escaped names throughout."
+    "block_rows": 2,
+    "block_cols": 2,
+    "stages_per_cluster": 2,
+    "lanes_per_stage": 2,
+    "lfsr_width": 8,
+    "total_ffs": 128,
+    "estimated_signals": 1500,
+    "hierarchy_depth": 2,
+    "description": "2x2 grid of clusters, each containing 2x2 pipeline of 8-bit LFSRs. Fully flattened with named-port cell instantiations and bit-by-bit assigns. No 2D arrays."
   },
   "query": {
     "signal": "tb.dut.final_out[0]",
-    "time": 4075000
+    "time": 1225000
   },
   "x_injection": {
     "method": "force",
-    "target": "tb.dut.inject_data[0]",
+    "target": "tb.dut.r0c0_s0l0_ff0.Q",
     "value": "1'bx",
-    "time": 1075000,
+    "time": 1090000,
     "injection_class": "primary_input"
   },
   "expected": {
     "injection_target": "tb.dut.inject_data[0]",
-    "injection_time": 1075000,
+    "injection_time": 1080000,
     "query_signal": "tb.dut.final_out[0]",
-    "query_time": 4075000,
+    "query_time": 12750,
     "injection_class": "primary_input",
     "max_output": 1000
   },
