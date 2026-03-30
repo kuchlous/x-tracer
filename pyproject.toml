@@ -21,6 +21,7 @@ x-tracer = "src.cli.main:main"
 [tool.pytest.ini_options]
 markers = [
     "soc: SoC-scale tests requiring real netlist at /Backend_share/",
+    "slow: tests that take >1 minute (SoC traces, large VCDs)",
 ]
 
 [tool.setuptools.packages.find]
