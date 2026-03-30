@@ -241,7 +241,13 @@ def load_vcd_fast_rust(vcd_path: Path | str, signal_names: set[str] | list[str],
     raw = xtracer_vcd.extract_signals(str(vcd_path), signal_list)
     # raw is dict[str, list[tuple[int, str]]] — exactly what VCDDatabase expects
     transitions = {name: list(tlist) for name, tlist in raw.items()}
-    all_signals = set(transitions.keys())
+    # Include all VCD signals in the signal set (from header) so has_signal()
+    # works for signals not in the filter.  Header parse is fast (<1s even for
+    # large VCDs) since it stops at $enddefinitions.
+    try:
+        all_signals, _ = load_vcd_header(vcd_path)
+    except Exception:
+        all_signals = set(transitions.keys())
     return VCDDatabase(transitions, all_signals, timescale_fs=timescale_fs)
 
 
