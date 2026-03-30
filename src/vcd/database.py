@@ -219,12 +219,47 @@ def load_vcd_header(vcd_path: Path | str) -> tuple[set[str], int]:
     return parse_vcd_header(vcd_path)
 
 
+def load_vcd_fast_rust(vcd_path: Path | str, signal_names: set[str] | list[str],
+                       timescale_fs: int = 1000) -> VCDDatabase:
+    """Load specific signals from a VCD using the Rust streaming backend.
+
+    This is the fastest path for large VCDs (multi-GB) when you only need a
+    handful of signals.  It streams through the file once, decoding only the
+    requested signals, so memory usage is proportional to the number of
+    transitions in those signals rather than the file size.
+
+    Args:
+        vcd_path: Path to the VCD file.
+        signal_names: Hierarchical signal names (dot-separated).
+        timescale_fs: Timescale in femtoseconds per VCD time unit (default 1000 = 1ps).
+
+    Returns:
+        VCDDatabase populated with the requested signals' transitions.
+    """
+    import xtracer_vcd
+    signal_list = list(signal_names)
+    raw = xtracer_vcd.extract_signals(str(vcd_path), signal_list)
+    # raw is dict[str, list[tuple[int, str]]] — exactly what VCDDatabase expects
+    transitions = {name: list(tlist) for name, tlist in raw.items()}
+    all_signals = set(transitions.keys())
+    return VCDDatabase(transitions, all_signals, timescale_fs=timescale_fs)
+
+
 def load_vcd(vcd_path: Path | str, signals: set[str] | None = None) -> VCDDatabase:
     """Load VCD file. If signals is provided, only load those signals (optimization).
 
-    Tries pywellen backend first, falls back to pyvcd.
+    Tries Rust streaming backend first for selective loading, then pywellen,
+    then falls back to pyvcd.
     """
     vcd_path = Path(vcd_path)
+
+    # Fast path: if specific signals requested, try the Rust streaming backend
+    if signals:
+        try:
+            return load_vcd_fast_rust(vcd_path, signals)
+        except Exception:
+            pass
+
     try:
         from .pywellen_backend import load as _load_pywellen
         return _load_pywellen(vcd_path, signals)

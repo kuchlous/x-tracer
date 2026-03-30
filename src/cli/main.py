@@ -87,7 +87,7 @@ def cli(netlist, vcd, signal, query_time, output_format, max_depth, top_module, 
 
     # --- Cone-based VCD loading (avoids OOM on large files) ---
     try:
-        from src.vcd import load_vcd_header, load_vcd
+        from src.vcd import load_vcd_header, load_vcd, load_vcd_fast
         from src.vcd.database import PrefixMappedVCD
 
         # Step 1: Parse VCD header only (fast — signal names + timescale)
@@ -135,7 +135,16 @@ def cli(netlist, vcd, signal, query_time, output_format, max_depth, top_module, 
         click.echo(f"Loading {len(vcd_cone)} VCD signals (of {len(vcd_signals)} total) ...", err=True)
 
         # Step 5: Load VCD with only the cone signals filtered
-        vcd_db = load_vcd(Path(vcd), signals=vcd_cone)
+        # Use fast extraction for large VCDs (>100MB) -- extract to mini-VCD first
+        vcd_size = Path(vcd).stat().st_size
+        _100MB = 100 * 1024 * 1024
+        if vcd_size > _100MB:
+            click.echo(f"Large VCD ({vcd_size // (1024*1024)} MB) -- using fast extraction", err=True)
+            vcd_db = load_vcd_fast(Path(vcd), signals=vcd_cone,
+                                   all_signal_names=vcd_signals,
+                                   timescale_fs=timescale_fs)
+        else:
+            vcd_db = load_vcd(Path(vcd), signals=vcd_cone)
     except Exception as e:
         click.echo(f"Error loading VCD: {e}", err=True)
         sys.exit(1)
