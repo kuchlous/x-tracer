@@ -115,7 +115,7 @@ def cli(netlist, vcd, signal, query_time, output_format, max_depth, top_module, 
                 cone_signals = cone_bit
         click.echo(f"Backward cone: {len(cone_signals)} netlist signals", err=True)
 
-        # Step 4: Map cone signals to VCD names
+        # Step 4: Map cone signals to VCD names, including per-instance ports
         if vcd_prefix:
             vcd_cone = set()
             for sig in cone_signals:
@@ -131,6 +131,43 @@ def cli(netlist, vcd, signal, query_time, output_format, max_depth, top_module, 
         # Always include the query signal itself (it's in VCD space)
         if sig_path in vcd_signals:
             vcd_cone.add(sig_path)
+
+        # Add per-instance port signals for gates in the cone.
+        # Xcelium VCDs have per-instance signals (e.g. gate.D, gate.Q)
+        # that are more accurate than bus-level wires (bus lag issue).
+        # Also needed for temporal backtrack (first_x_time on Q port).
+        port_count = 0
+        for gate in graph._gates.values():
+            inst = gate.instance_path
+            vcd_inst = inst
+            if vcd_prefix and inst.startswith(netlist_top + '.'):
+                vcd_inst = vcd_prefix + inst[len(netlist_top):]
+            # Check if any of this gate's wire signals are in the cone
+            in_cone = False
+            for pin in list(gate.inputs.values()) + list(gate.outputs.values()):
+                if pin.signal in cone_signals:
+                    in_cone = True
+                    break
+            if not in_cone:
+                continue
+            # Add per-instance port signals that exist in the VCD.
+            # Xcelium VCDs use escaped identifiers (\name) for names with
+            # special chars (brackets, etc.). The fast parser strips the
+            # backslash, so we try both forms.
+            inst_leaf = vcd_inst.rsplit('.', 1)[-1] if '.' in vcd_inst else vcd_inst
+            inst_parent = vcd_inst.rsplit('.', 1)[0] if '.' in vcd_inst else ''
+            for pname in list(gate.inputs.keys()) + list(gate.outputs.keys()):
+                candidates = [
+                    f"{vcd_inst}.{pname}",
+                    f"{inst_parent}.\\{inst_leaf}.{pname}" if inst_parent else f"\\{inst_leaf}.{pname}",
+                ]
+                for candidate in candidates:
+                    if candidate in vcd_signals:
+                        vcd_cone.add(candidate)
+                        port_count += 1
+                        break
+        if port_count > 0:
+            click.echo(f"Added {port_count} per-instance port signals", err=True)
 
         click.echo(f"Loading {len(vcd_cone)} VCD signals (of {len(vcd_signals)} total) ...", err=True)
 

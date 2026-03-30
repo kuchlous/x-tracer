@@ -83,6 +83,20 @@ def _sig_key(signal: str, bit: int) -> str:
     return f"{signal}[{bit}]"
 
 
+def _escaped_alt(sig: str) -> str | None:
+    """Build escaped-identifier variant of a per-instance port signal.
+
+    Xcelium VCDs use ``\\name`` for identifiers with special characters
+    (brackets, etc.) while the netlist parser strips the backslash.
+    E.g. ``a.b.CDN_MBIT_foo.D`` → ``a.b.\\CDN_MBIT_foo.D``.
+    """
+    parts = sig.rsplit('.', 2)
+    if len(parts) >= 3:
+        # parent.instance.port → parent.\instance.port
+        return f"{parts[0]}.\\{parts[1]}.{parts[2]}"
+    return None
+
+
 def _vcd_get_bit(vcd: VCDDatabase, signal: str, bit: int, time: int,
                  alt_signal: str | None = None) -> str:
     """Safely get a bit value from VCD, returning 'x' for missing signals.
@@ -90,11 +104,17 @@ def _vcd_get_bit(vcd: VCDDatabase, signal: str, bit: int, time: int,
     If alt_signal is provided and exists, tries it FIRST — per-instance port
     signals (e.g. ``gate.A``) are more accurate than bus-level wire signals
     in simulators like Xcelium -xprop F, where bus dumps lag behind per-bit
-    DFF Q updates.  Falls back to the primary signal.
+    DFF Q updates.  Falls back to the primary signal.  Also tries escaped
+    identifier forms for Cadence VCD compatibility.
     """
-    for sig in (alt_signal, signal):
-        if sig is None:
-            continue
+    candidates = []
+    if alt_signal is not None:
+        candidates.append(alt_signal)
+        esc = _escaped_alt(alt_signal)
+        if esc:
+            candidates.append(esc)
+    candidates.append(signal)
+    for sig in candidates:
         try:
             val = vcd.get_bit(sig, bit, time)
         except KeyError:
@@ -252,7 +272,23 @@ def _handle_sequential(
                           gate=gate, children=[child])
 
     # Priority 3: D input at last active edge
+    # For multi-bit DFFs (e.g. DFFQNAA2W with D0/QN0, D1/QN1), match the
+    # D port to the Q output being traced by suffix index.
     d_port = gate.d_port
+    # Determine which Q output we're tracing
+    for q_pname, q_pin in gate.outputs.items():
+        q_sig_check, q_bit_check = _pin_signal_bit(q_pin)
+        if q_sig_check == signal and q_bit_check == bit:
+            # Found the output port — look for matching D port by index
+            # e.g. QN0 → D0, Q1 → D1, QN2 → D2
+            import re
+            q_idx = re.search(r'(\d+)$', q_pname)
+            if q_idx:
+                candidate_d = f"D{q_idx.group(1)}"
+                if candidate_d in gate.inputs:
+                    d_port = candidate_d
+            break
+
     if d_port is None or d_port not in gate.inputs:
         return XCause(signal=sig_str, time=time,
                       cause_type="uninit_ff", gate=gate)
@@ -323,15 +359,18 @@ def _handle_sequential(
     for q_pname, q_pin in gate.outputs.items():
         q_sig, q_bit = _pin_signal_bit(q_pin)
         q_alt = f"{gate.instance_path}.{q_pname}"
-        try:
-            t_x = vcd.first_x_time(q_sig, q_bit)
-        except KeyError:
+        q_alt_esc = _escaped_alt(q_alt)
+        # Try wire, per-instance port, and escaped per-instance port
+        candidates_q = [(q_sig, q_bit), (q_alt, 0)]
+        if q_alt_esc:
+            candidates_q.append((q_alt_esc, 0))
+        for try_sig, try_bit in candidates_q:
             try:
-                t_x = vcd.first_x_time(q_alt, 0)
+                t_x = vcd.first_x_time(try_sig, try_bit)
             except KeyError:
                 continue
-        if t_x is not None and (q_first_x is None or t_x < q_first_x):
-            q_first_x = t_x
+            if t_x is not None and (q_first_x is None or t_x < q_first_x):
+                q_first_x = t_x
 
     if q_first_x is not None and q_first_x < time:
         # Find the clock edge at or before q_first_x
