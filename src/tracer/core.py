@@ -386,9 +386,9 @@ def _handle_combinational(
     expected = gate_model.forward(gate.cell_type, input_values)
 
     if expected != 'x':
-        # Assign gates (pure wires) have no per-instance VCD signals, so the
-        # bus-level input may appear non-X when individual bits are actually X.
-        # An assign cannot inject X — always trace through its inputs.
+        # Assign gates (pure wires) cannot inject X.  Bus-level VCD values
+        # may appear non-X when per-instance port signals (on the actual
+        # downstream gates) show X (Xcelium bus lag).  Always trace through.
         if gate.cell_type in ('assign', 'buf', 'BUF') and gate.inputs:
             children = []
             for port_name, pin in gate.inputs.items():
