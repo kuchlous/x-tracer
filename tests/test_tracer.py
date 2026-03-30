@@ -303,124 +303,151 @@ class TestStress:
 
 SOC_NETLIST = Path("/Backend_share/pd_dv_1p1/Dec_26_Flat_SDF/rjn_soc_top.Fill_uniquify.v")
 SOC_GPIO_VCD = Path("/data/work_area/alokk/x-tracer/proj/verif/run/run_log/gpio_x_test2/gpio_x.vcd")
+SOC_RESET_VCD = Path("/data/work_area/alokk/x-tracer/proj/verif/run/run_log/reset_x_test2/reset_x.vcd")
 SOC_VCD_PREFIX = "rjn_top.u_rjn_soc_top"
+SOC_NETLIST_TOP = "rjn_soc_top"
 
-soc_available = SOC_NETLIST.exists() and SOC_GPIO_VCD.exists()
+soc_gpio_available = SOC_NETLIST.exists() and SOC_GPIO_VCD.exists()
+soc_reset_available = SOC_NETLIST.exists() and SOC_RESET_VCD.exists()
 
 
-@pytest.mark.skipif(not soc_available, reason="SoC netlist/VCD not available")
+def _soc_trace(netlist, vcd_path, query_signal, query_time_ps, max_depth=50):
+    """Shared helper: load cone, trace, return leaves.
+
+    Handles VCD prefix mapping, per-instance port loading, and
+    Cadence escaped identifiers.
+    """
+    from src.vcd.database import load_vcd_header, PrefixMappedVCD
+
+    all_sigs, ts_fs = load_vcd_header(vcd_path)
+    netlist_sig = query_signal.replace(SOC_VCD_PREFIX, SOC_NETLIST_TOP, 1)
+
+    # Compute backward cone
+    cone = netlist.get_input_cone(netlist_sig, max_depth=max_depth)
+
+    # Map cone to VCD names + add per-instance port signals
+    vcd_cone = set()
+    for sig in cone:
+        if sig.startswith(SOC_NETLIST_TOP + "."):
+            vcd_sig = SOC_VCD_PREFIX + sig[len(SOC_NETLIST_TOP):]
+        else:
+            vcd_sig = sig
+        if vcd_sig in all_sigs:
+            vcd_cone.add(vcd_sig)
+    vcd_cone.add(query_signal)
+
+    # Add per-instance port signals for gates in the cone
+    for gate in netlist._gates.values():
+        inst = gate.instance_path
+        in_cone = any(pin.signal in cone for pin in
+                      list(gate.inputs.values()) + list(gate.outputs.values()))
+        if not in_cone:
+            continue
+        vcd_inst = SOC_VCD_PREFIX + inst[len(SOC_NETLIST_TOP):] if inst.startswith(SOC_NETLIST_TOP + ".") else inst
+        inst_leaf = vcd_inst.rsplit('.', 1)[-1]
+        inst_parent = vcd_inst.rsplit('.', 1)[0] if '.' in vcd_inst else ''
+        for pname in list(gate.inputs.keys()) + list(gate.outputs.keys()):
+            for candidate in (f"{vcd_inst}.{pname}",
+                              f"{inst_parent}.\\{inst_leaf}.{pname}" if inst_parent else None):
+                if candidate and candidate in all_sigs:
+                    vcd_cone.add(candidate)
+                    break
+
+    vcd = load_vcd(vcd_path, signals=vcd_cone)
+    mapped_vcd = PrefixMappedVCD(vcd, SOC_VCD_PREFIX, SOC_NETLIST_TOP)
+
+    vcd_time = (query_time_ps * 1000) // ts_fs
+    result = trace_x(
+        netlist, mapped_vcd, GateModel(),
+        netlist_sig, 0, vcd_time, max_depth=max_depth,
+    )
+    return collect_leaves(result)
+
+
+@pytest.mark.skipif(not soc_gpio_available, reason="SoC GPIO VCD not available")
 @pytest.mark.slow
-class TestSoCTrace:
-    """Real SoC integration tests — TSMC 22nm ARM A55 (480MB netlist, 5.5GB VCD).
+class TestSoCGPIOTrace:
+    """Real SoC GPIO injection tests — TSMC 22nm ARM A55.
 
-    These tests take ~7 minutes each (5m netlist parse + 50s VCD load).
-    They represent real user workflows: see X in sim, trace to root cause.
+    User workflow: GPIO APP_GPIO0 forced to X at 50us, test hangs.
+    User finds X on GPIO sync register, traces to root cause.
     """
 
     @pytest.fixture(scope="class")
     def soc_netlist(self):
-        """Parse the 480MB flat post-P&R netlist (cached per class)."""
-        return parse_netlist_fast([SOC_NETLIST], top_module="rjn_soc_top")
+        return parse_netlist_fast([SOC_NETLIST], top_module=SOC_NETLIST_TOP)
 
-    def test_gpio_injection_traces_to_sync_dff(self, soc_netlist):
-        """User workflow: test hangs, X found on GPIO input synchronizer.
-
-        Scenario: GPIO APP_GPIO0 forced to X at 50us. X propagates through
-        pad → GPIO register block → input synchronizer DFF. User sees X on
-        the sync register output and runs x-tracer to find root cause.
-
-        Expected: trace reaches gpio_ifc_rg_in_sync1 DFF as uninit_ff
-        (DFF captured X from the GPIO pad input).
-        """
-        from src.vcd.database import load_vcd_header
-
-        query_signal = (
+    def test_gpio_sync_register_traces_to_primary_input(self, soc_netlist):
+        """X on GPIO input synchronizer traces through 19 hops (DFF + buffer
+        tree) all the way to gpio_in_val[0] as primary_input."""
+        leaves = _soc_trace(
+            soc_netlist, SOC_GPIO_VCD,
             "rjn_top.u_rjn_soc_top.inst_rjn_app_top.inst_app_gpio1"
-            ".FE_OFC229639_gpio_ifc_rg_in_sync1_0.Y"
+            ".FE_OFC229639_gpio_ifc_rg_in_sync1_0.Y",
+            55_000_000,
         )
-        query_time_ps = 55_000_000  # 55us — after GPIO X injection at 50us
-
-        # Load VCD header + cone signals
-        all_sigs, ts_fs = load_vcd_header(SOC_GPIO_VCD)
-
-        # Map query signal to netlist space
-        netlist_top = "rjn_soc_top"
-        netlist_sig = query_signal.replace(SOC_VCD_PREFIX, netlist_top, 1)
-
-        # Compute cone and load VCD
-        cone = soc_netlist.get_input_cone(netlist_sig, max_depth=30)
-        vcd_cone = set()
-        for sig in cone:
-            if sig.startswith(netlist_top + "."):
-                vcd_sig = SOC_VCD_PREFIX + sig[len(netlist_top):]
-            else:
-                vcd_sig = sig
-            if vcd_sig in all_sigs:
-                vcd_cone.add(vcd_sig)
-        vcd_cone.add(query_signal)
-
-        from src.vcd.database import PrefixMappedVCD
-        vcd = load_vcd(SOC_GPIO_VCD, signals=vcd_cone)
-        mapped_vcd = PrefixMappedVCD(vcd, SOC_VCD_PREFIX, netlist_top)
-
-        # Trace
-        gate_model = GateModel()
-        vcd_time = (query_time_ps * 1000) // ts_fs  # convert ps to VCD units
-        result = trace_x(
-            soc_netlist, mapped_vcd, gate_model,
-            netlist_sig, 0, vcd_time, max_depth=30,
-        )
-        leaves = collect_leaves(result)
-
-        # Verify: should reach the GPIO sync DFF
         assert len(leaves) >= 1, "Trace returned no leaves"
-        leaf_sigs = {l.signal for l in leaves}
-        leaf_types = {l.cause_type for l in leaves}
-
-        # The trace should end at a DFF in the GPIO block (uninit_ff)
-        assert "uninit_ff" in leaf_types, (
-            f"Expected uninit_ff in leaves, got: {leaf_types}"
+        # Must reach root cause — primary_input at gpio_in_val
+        pi_leaves = [l for l in leaves if l.cause_type == "primary_input"]
+        assert len(pi_leaves) >= 1, (
+            f"Expected primary_input root cause, got: "
+            f"{set(l.cause_type for l in leaves)}"
         )
-        # Verify it's in the GPIO block
-        gpio_leaves = [l for l in leaves if "gpio" in l.signal.lower()]
-        assert len(gpio_leaves) >= 1, (
-            f"Expected leaf in GPIO block, got: {leaf_sigs}"
+        assert any("gpio_in_val" in l.signal for l in pi_leaves), (
+            f"Expected root cause at gpio_in_val, got: "
+            f"{set(l.signal for l in pi_leaves)}"
         )
 
-    def test_gpio_primary_input_traces_to_port(self, soc_netlist):
-        """User workflow: trace the GPIO port itself — should be primary_input.
-
-        This is the simplest SoC trace: APP_GPIO0 is a top-level port,
-        so tracing it immediately returns primary_input.
-        """
-        query_signal = "rjn_top.u_rjn_soc_top.APP_GPIO0"
-        query_time_ps = 55_000_000
-
-        from src.vcd.database import load_vcd_header, PrefixMappedVCD
-
-        all_sigs, ts_fs = load_vcd_header(SOC_GPIO_VCD)
-        netlist_top = "rjn_soc_top"
-        netlist_sig = query_signal.replace(SOC_VCD_PREFIX, netlist_top, 1)
-
-        cone = soc_netlist.get_input_cone(netlist_sig, max_depth=30)
-        vcd_cone = set()
-        for sig in cone:
-            vcd_sig = SOC_VCD_PREFIX + sig[len(netlist_top):] if sig.startswith(netlist_top + ".") else sig
-            if vcd_sig in all_sigs:
-                vcd_cone.add(vcd_sig)
-        vcd_cone.add(query_signal)
-
-        vcd = load_vcd(SOC_GPIO_VCD, signals=vcd_cone)
-        mapped_vcd = PrefixMappedVCD(vcd, SOC_VCD_PREFIX, netlist_top)
-
-        gate_model = GateModel()
-        vcd_time = (query_time_ps * 1000) // ts_fs
-        result = trace_x(
-            soc_netlist, mapped_vcd, gate_model,
-            netlist_sig, 0, vcd_time, max_depth=30,
+    def test_gpio_port_traces_to_primary_input(self, soc_netlist):
+        """APP_GPIO0 is a top-level port — direct primary_input."""
+        leaves = _soc_trace(
+            soc_netlist, SOC_GPIO_VCD,
+            "rjn_top.u_rjn_soc_top.APP_GPIO0",
+            55_000_000,
         )
-        leaves = collect_leaves(result)
-
         assert len(leaves) == 1
         assert leaves[0].cause_type == "primary_input"
         assert "APP_GPIO0" in leaves[0].signal
+
+
+@pytest.mark.skipif(not soc_reset_available, reason="SoC reset VCD not available")
+@pytest.mark.slow
+class TestSoCResetTrace:
+    """Real SoC reset injection tests — EXTERNAL_RESET forced to X at 50us."""
+
+    @pytest.fixture(scope="class")
+    def soc_netlist(self):
+        return parse_netlist_fast([SOC_NETLIST], top_module=SOC_NETLIST_TOP)
+
+    def test_reset_port_traces_to_primary_input(self, soc_netlist):
+        """EXTERNAL_RESET is a top-level port — direct primary_input."""
+        leaves = _soc_trace(
+            soc_netlist, SOC_RESET_VCD,
+            "rjn_top.u_rjn_soc_top.EXTERNAL_RESET",
+            55_000_000,
+        )
+        assert len(leaves) == 1
+        assert leaves[0].cause_type == "primary_input"
+        assert "EXTERNAL_RESET" in leaves[0].signal
+
+    def test_reset_buffer_tree_traces_to_primary_input(self, soc_netlist):
+        """User workflow: X found deep in reset distribution tree.
+
+        Scenario: EXTERNAL_RESET forced to X at 50us. X propagates through
+        pad and buffer tree. User sees X on a buffer output deep in the
+        reset tree and traces back to root cause.
+
+        Expected: traces through INV + BUF to EXTERNAL_RESET_fromPad (primary_input).
+        """
+        leaves = _soc_trace(
+            soc_netlist, SOC_RESET_VCD,
+            "rjn_top.u_rjn_soc_top.FE_OFN94700_EXTERNAL_RESET_fromPad",
+            55_000_000,
+        )
+        assert len(leaves) >= 1
+        pi_leaves = [l for l in leaves if l.cause_type == "primary_input"]
+        assert len(pi_leaves) >= 1, (
+            f"Expected primary_input root cause, got: "
+            f"{set(l.cause_type for l in leaves)}"
+        )
+        assert any("EXTERNAL_RESET" in l.signal for l in pi_leaves)
