@@ -1,0 +1,51 @@
+{
+  "id": "stress_edge_nested_clock_gate",
+  "category": "stress_edge",
+  "generation": "manual",
+  "netlist": {
+    "file": "netlist.v",
+    "level": "gate"
+  },
+  "vcd": "sim.vcd",
+  "testbench": "tb.v",
+  "sim_env": {
+    "simulator": "xcelium",
+    "version": "24.09",
+    "timescale": "1ns/1ps",
+    "cmd": "xrun -access +rwc -xprop F netlist.v tb.v -timescale 1ns/1ps"
+  },
+  "timing": {
+    "clock_period_ticks": 10000,
+    "clock_edge": "posedge"
+  },
+  "design": {
+    "icg_levels": 3,
+    "total_ffs": 4,
+    "total_icg_cells": 3,
+    "estimated_signals": 30,
+    "hierarchy_depth": 1,
+    "description": "3 nested ICG cells (latch-based clock gates). X on innermost enable corrupts gclk_l3, affecting FF_A and FF_B but not FF_C/FF_D on higher clock levels. Tests clock-domain X propagation through gating hierarchy."
+  },
+  "query": {
+    "signal": "tb.dut.final_out",
+    "time": 435000
+  },
+  "x_injection": {
+    "method": "force",
+    "target": "tb.dut.icg_l3.en_lat",
+    "value": "1'bx",
+    "time": 285000,
+    "injection_class": "clock_gating"
+  },
+  "expected": {
+    "root_cause_signal": "tb.dut.icg_l3.en_lat",
+    "root_cause_time": 285000,
+    "query_signal": "tb.dut.final_out",
+    "affected_ffs": ["tb.dut.ff_a", "tb.dut.ff_b"],
+    "unaffected_ffs": ["tb.dut.ff_c", "tb.dut.ff_d"],
+    "injection_class": "clock_gating",
+    "description": "X on icg_l3 enable latch corrupts gclk_l3 clock, making ff_a and ff_b outputs X. Tool must trace X on FF output back through clock pin to the ICG enable, not the data pin. Must correctly identify clock-gating X vs data-path X."
+  },
+  "status": "golden",
+  "author": "manual"
+}

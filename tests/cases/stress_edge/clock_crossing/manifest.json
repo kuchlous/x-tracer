@@ -1,0 +1,52 @@
+{
+  "id": "stress_edge_clock_crossing",
+  "category": "stress_edge",
+  "generation": "manual",
+  "netlist": {
+    "file": "netlist.v",
+    "level": "gate"
+  },
+  "vcd": "sim.vcd",
+  "testbench": "tb.v",
+  "sim_env": {
+    "simulator": "xcelium",
+    "version": "24.09",
+    "timescale": "1ns/1ps",
+    "cmd": "xrun -access +rwc -xprop F netlist.v tb.v -timescale 1ns/1ps"
+  },
+  "timing": {
+    "clk_a_period_ticks": 10000,
+    "clk_b_period_ticks": 14000,
+    "clock_edge": "posedge"
+  },
+  "design": {
+    "domain_a_stages": 3,
+    "synchronizer_stages": 2,
+    "domain_b_stages": 2,
+    "total_ffs": 7,
+    "estimated_signals": 25,
+    "hierarchy_depth": 1,
+    "description": "Two asynchronous clock domains with 2-FF synchronizer. Domain A pipeline (clk_a=100MHz) feeds domain B pipeline (clk_b=71MHz). Tests multi-clock X tracing across CDC boundary."
+  },
+  "query": {
+    "signal": "tb.dut.final_out",
+    "time": 700000
+  },
+  "x_injection": {
+    "method": "force",
+    "target": "tb.dut.ff_a0.Q",
+    "value": "1'bx",
+    "time": 405000,
+    "injection_class": "force"
+  },
+  "expected": {
+    "root_cause_signal": "tb.dut.ff_a0.Q",
+    "root_cause_time": 405000,
+    "query_signal": "tb.dut.final_out",
+    "trace_depth": 7,
+    "injection_class": "force",
+    "description": "X must trace from domain B output back across CDC synchronizer into domain A. Tool must handle two different clock edges and asynchronous boundary correctly."
+  },
+  "status": "golden",
+  "author": "manual"
+}

@@ -1,0 +1,50 @@
+{
+  "id": "stress_edge_tristate_bus",
+  "category": "stress_edge",
+  "generation": "manual",
+  "netlist": {
+    "file": "netlist.v",
+    "level": "gate"
+  },
+  "vcd": "sim.vcd",
+  "testbench": "tb.v",
+  "sim_env": {
+    "simulator": "xcelium",
+    "version": "24.09",
+    "timescale": "1ns/1ps",
+    "cmd": "xrun -access +rwc -xprop F netlist.v tb.v -timescale 1ns/1ps"
+  },
+  "timing": {
+    "clock_period_ticks": 10000,
+    "clock_edge": "posedge"
+  },
+  "design": {
+    "num_drivers": 4,
+    "total_ffs": 6,
+    "bus_type": "tri-state (bufif1)",
+    "estimated_signals": 20,
+    "hierarchy_depth": 1,
+    "description": "4-driver tri-state bus using bufif1 primitives. One-hot driver selection. X injected on driver 2 source FF while driver 2 is active. Tests multi-driver resolution and identification of the specific X-contributing driver."
+  },
+  "query": {
+    "signal": "tb.dut.final_out",
+    "time": 475000
+  },
+  "x_injection": {
+    "method": "force",
+    "target": "tb.dut.ff_d2.Q",
+    "value": "1'bx",
+    "time": 325000,
+    "injection_class": "force"
+  },
+  "expected": {
+    "root_cause_signal": "tb.dut.ff_d2.Q",
+    "root_cause_time": 325000,
+    "query_signal": "tb.dut.final_out",
+    "trace_depth": 3,
+    "injection_class": "force",
+    "description": "X traces from output through bus receiver back to driver 2 FF (ff_d2.Q). Tool must identify driver 2 among 4 tri-state drivers by checking which bufif1 is enabled. Naive tools may report all 4 drivers."
+  },
+  "status": "golden",
+  "author": "manual"
+}

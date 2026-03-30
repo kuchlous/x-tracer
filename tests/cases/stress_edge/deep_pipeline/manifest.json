@@ -1,0 +1,49 @@
+{
+  "id": "stress_edge_deep_pipeline",
+  "category": "stress_edge",
+  "generation": "manual",
+  "netlist": {
+    "file": "netlist.v",
+    "level": "gate"
+  },
+  "vcd": "sim.vcd",
+  "testbench": "tb.v",
+  "sim_env": {
+    "simulator": "xcelium",
+    "version": "24.09",
+    "timescale": "1ns/1ps",
+    "cmd": "xrun -access +rwc -xprop F netlist.v tb.v -timescale 1ns/1ps"
+  },
+  "timing": {
+    "clock_period_ticks": 10000,
+    "clock_edge": "posedge"
+  },
+  "design": {
+    "pipeline_stages": 104,
+    "total_ffs": 104,
+    "estimated_signals": 312,
+    "hierarchy_depth": 1,
+    "description": "104-stage deep FF pipeline with buf gates between stages. No feedback. Pure linear chain. Tests depth-of-trace scalability."
+  },
+  "query": {
+    "signal": "tb.dut.final_out",
+    "time": 1505000
+  },
+  "x_injection": {
+    "method": "force",
+    "target": "tb.dut.ff_0.Q",
+    "value": "1'bx",
+    "time": 285000,
+    "injection_class": "force"
+  },
+  "expected": {
+    "root_cause_signal": "tb.dut.ff_0.Q",
+    "root_cause_time": 285000,
+    "query_signal": "tb.dut.final_out",
+    "trace_depth": 104,
+    "injection_class": "force",
+    "description": "X at ff_0.Q must trace back 104 FF stages. Tool must handle deep linear chain without stack overflow or timeout."
+  },
+  "status": "golden",
+  "author": "manual"
+}
