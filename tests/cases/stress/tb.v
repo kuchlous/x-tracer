@@ -14,7 +14,7 @@ module tb;
   parameter LANES_PER_STAGE    = 8;
   parameter LFSR_WIDTH         = 32;
   parameter SETTLE_CYCLES      = 100;
-  parameter PROPAGATE_CYCLES   = 300;
+  parameter PROPAGATE_CYCLES   = 5000;
   parameter CLK_PERIOD         = 10;
 
   reg                     clk = 0;
@@ -69,10 +69,21 @@ module tb;
     end
     $display("INFO: Clean at t=%0t, final_out=%h", $time, final_out);
 
-    // Phase 3: Inject X
-    inject_data[0] = 1'bx;
+    // Phase 3: Inject X on a single primary input
+    // Force X on inject_data[0] — this is the only injection point.
+    // x-tracer should trace final_out back through the LFSR pipeline
+    // to this single primary_input as the root cause.
     inject_valid = 1;
-    $display("INFO: X injected at t=%0t", $time);
+    inject_data[0] = 1'bx;
+    $display("INFO: X injected on inject_data[0] at t=%0t", $time);
+    // Also force X directly on the first FF to ensure propagation
+    // in simulators where behavioral DFF doesn't propagate X through if/else
+    @(posedge clk);
+    force dut.gen_block[0].gen_col[0].cluster_inst.gen_stage[0].gen_lane[0].core.ff0.Q = 1'bx;
+    $display("INFO: Forced ff0.Q to X at t=%0t", $time);
+    repeat(2) @(posedge clk);
+    release dut.gen_block[0].gen_col[0].cluster_inst.gen_stage[0].gen_lane[0].core.ff0.Q;
+    $display("INFO: Released ff0.Q at t=%0t", $time);
 
     // Phase 4: Propagate
     repeat (PROPAGATE_CYCLES) @(posedge clk);
