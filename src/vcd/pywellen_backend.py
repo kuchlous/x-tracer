@@ -1,10 +1,13 @@
-"""VCD loading backend using pywellen (Rust-backed, fast)."""
+"""VCD loading backend using xtracer_vcd (our fork of pywellen, Rust-backed)."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-import pywellen
+try:
+    import xtracer_vcd as pywellen
+except ImportError:
+    import pywellen
 
 from .database import VCDDatabase
 
