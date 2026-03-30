@@ -256,46 +256,45 @@ class TestStress:
         leaves = collect_leaves(result)
         return leaves
 
-    def test_deep_pipeline_uninit_ff(self):
-        """Stress edge: 104-stage deep pipeline — X pulse propagates through
-        pipeline stages, trace reaches near injection point as uninit_ff."""
+    def test_deep_pipeline_traces_to_ff0(self):
+        """Stress edge: 104-stage deep pipeline — trace reaches ff_q_0,
+        the force-injected DFF (root cause)."""
         leaves = self._load_stress_edge("deep_pipeline")
         assert len(leaves) == 1, f"Expected 1 leaf, got {len(leaves)}"
-        assert leaves[0].cause_type == "uninit_ff"
-        # With 2-cycle force + pipeline delay, trace reaches ff_q_98
-        assert "ff_q_" in leaves[0].signal
-
-    def test_wide_fanout_all_32_leaves_single_source(self):
-        """Stress edge: 32-way fanout reconverges — 32 leaves, most at src_q[0]."""
-        leaves = self._load_stress_edge("wide_fanout")
-        assert len(leaves) == 32, f"Expected 32 leaves, got {len(leaves)}"
-        # With real Xcelium -xprop F: 24 uninit_ff at src_q, 8 x_injection at OR gates
-        src_leaves = [l for l in leaves if "src_q" in l.signal]
-        assert len(src_leaves) >= 24, (
-            f"Expected >=24 leaves at src_q, got {len(src_leaves)}"
+        assert leaves[0].signal == "tb.dut.ff_q_0[0]", (
+            f"Expected root cause at ff_q_0, got {leaves[0].signal}"
         )
 
-    def test_clock_crossing_traces_to_domain_a(self):
-        """Stress edge: CDC — traces across clock boundary to domain A DFF."""
+    def test_wide_fanout_traces_to_source_dff(self):
+        """Stress edge: 32-way fanout reconverges — all uninit_ff leaves
+        trace to src_q (the force-injected source DFF)."""
+        leaves = self._load_stress_edge("wide_fanout")
+        assert len(leaves) == 32, f"Expected 32 leaves, got {len(leaves)}"
+        src_leaves = [l for l in leaves if "src_q" in l.signal]
+        assert len(src_leaves) >= 24, (
+            f"Expected >=24 leaves at src_q (root cause), got {len(src_leaves)}"
+        )
+
+    def test_clock_crossing_traces_to_a_q0(self):
+        """Stress edge: CDC — traces across clock boundary to a_q0,
+        the force-injected DFF in domain A (root cause)."""
         leaves = self._load_stress_edge("clock_crossing")
         assert len(leaves) == 1, f"Expected 1 leaf, got {len(leaves)}"
-        assert leaves[0].cause_type == "uninit_ff"
-        # Trace reaches a DFF in domain A (a_q0, a_q1, or a_q2)
-        assert "a_q" in leaves[0].signal
+        assert leaves[0].signal == "tb.dut.a_q0[0]", (
+            f"Expected root cause at a_q0, got {leaves[0].signal}"
+        )
 
     def test_tristate_bus_identifies_driver(self):
-        """Stress edge: tri-state bus — trace reaches bus as x_injection."""
+        """Stress edge: tri-state bus — trace reaches bus x_injection."""
         leaves = self._load_stress_edge("tristate_bus")
         assert len(leaves) >= 1
-        # With real sim, tri-state bus shows x_injection (multi-driver contention)
         leaf_types = {l.cause_type for l in leaves}
         assert "x_injection" in leaf_types or "uninit_ff" in leaf_types
 
-    def test_nested_clock_gate_two_ff_leaves(self):
+    def test_nested_clock_gate_traces_to_primary_input(self):
         """Stress edge: nested ICG — traces to gated clock as primary_input."""
         leaves = self._load_stress_edge("nested_clock_gate")
         assert len(leaves) == 2, f"Expected 2 leaves, got {len(leaves)}"
-        # With real Xcelium: X on gated clock traced to primary_input
         leaf_sigs = {l.signal for l in leaves}
         assert "tb.dut.gclk_l3[0]" in leaf_sigs or "tb.dut.qa[0]" in leaf_sigs
 

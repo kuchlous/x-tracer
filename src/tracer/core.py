@@ -270,6 +270,16 @@ def _handle_sequential(
         edge_time = _find_last_clock_edge(gate, vcd, time)
 
     if edge_time is None:
+        # No clock edge found — FF was never clocked.  But if D is currently
+        # X, trace through D anyway to reach root cause.
+        d_alt = f"{gate.instance_path}.{d_port}"
+        d_val_now = _vcd_get_bit(vcd, d_sig, d_bit, time, alt_signal=d_alt)
+        if d_val_now == 'x':
+            child = _trace(netlist, vcd, gate_model, d_sig, d_bit,
+                           time, max_depth, depth + 1, exploring, memo, sig_memo)
+            return XCause(signal=sig_str, time=time,
+                          cause_type="uninit_ff",
+                          gate=gate, children=[child])
         return XCause(signal=sig_str, time=time,
                       cause_type="uninit_ff", gate=gate)
 
@@ -292,6 +302,54 @@ def _handle_sequential(
         return XCause(signal=sig_str, time=time,
                       cause_type="sequential_capture",
                       gate=gate, children=[child])
+
+    # D was not X at the clock edge, but Q is X.  Before giving up, try to
+    # reach root cause by:
+    # 1. Checking D at the query time (X arrived after the edge)
+    # 2. Finding when Q *first* became X and checking D at that earlier edge
+    #    (handles pipeline stages where the X pulse has passed through)
+    d_val_now = _vcd_get_bit(vcd, d_sig, d_bit, time, alt_signal=d_alt)
+    if d_val_now == 'x':
+        child = _trace(netlist, vcd, gate_model, d_sig, d_bit,
+                       time, max_depth, depth + 1, exploring, memo, sig_memo)
+        return XCause(signal=sig_str, time=time,
+                      cause_type="sequential_capture",
+                      gate=gate, children=[child])
+
+    # Temporal backtrack: find when Q first became X and trace D at that edge.
+    # The output signal may be a wire (assign output), so check both the wire
+    # and the gate's Q port for the first X time.
+    q_first_x = None
+    for q_pname, q_pin in gate.outputs.items():
+        q_sig, q_bit = _pin_signal_bit(q_pin)
+        q_alt = f"{gate.instance_path}.{q_pname}"
+        try:
+            t_x = vcd.first_x_time(q_sig, q_bit)
+        except KeyError:
+            try:
+                t_x = vcd.first_x_time(q_alt, 0)
+            except KeyError:
+                continue
+        if t_x is not None and (q_first_x is None or t_x < q_first_x):
+            q_first_x = t_x
+
+    if q_first_x is not None and q_first_x < time:
+        # Find the clock edge at or before q_first_x
+        earlier_edge = _find_last_clock_edge(gate, vcd, q_first_x)
+        if earlier_edge is not None:
+            if earlier_edge == q_first_x:
+                earlier_d_time = earlier_edge - 1
+            else:
+                earlier_d_time = earlier_edge
+            d_val_earlier = _vcd_get_bit(vcd, d_sig, d_bit, earlier_d_time,
+                                          alt_signal=d_alt)
+            if d_val_earlier == 'x':
+                child = _trace(netlist, vcd, gate_model, d_sig, d_bit,
+                               earlier_d_time, max_depth, depth + 1,
+                               exploring, memo, sig_memo)
+                return XCause(signal=sig_str, time=time,
+                              cause_type="sequential_capture",
+                              gate=gate, children=[child])
 
     return XCause(signal=sig_str, time=time,
                   cause_type="uninit_ff", gate=gate)
