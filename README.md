@@ -47,7 +47,12 @@ cd x-tracer
 pip install pyslang pyvcd click
 
 # Optional: install pywellen for fast VCD parsing (10-50x faster)
-pip install pywellen
+# Requires Rust toolchain (https://rustup.rs) and maturin
+git clone https://github.com/kuchlous/wellen.git
+cd wellen/pywellen
+pip install maturin
+maturin develop
+cd ../..
 
 # Verify
 python3 -m pytest tests/test_*.py -q
