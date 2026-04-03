@@ -36,7 +36,7 @@ No open-source tool for this exists.
 
 ## Installation
 
-Requires Python 3.10+ and a C++ compiler (for pyslang wheels).
+Requires Python 3.10+, a C++ compiler (for pyslang wheels), and [Icarus Verilog](http://iverilog.icarus.com/) (`iverilog`) for running tests.
 For fast VCD parsing (optional), a Rust toolchain is also needed — install via [rustup](https://rustup.rs).
 
 ```bash
