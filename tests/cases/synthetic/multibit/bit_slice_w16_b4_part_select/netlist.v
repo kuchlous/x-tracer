@@ -3,5 +3,7 @@ module bit_slice_dut (
     input  [15:0] bus,
     output [1:0] out
 );
-  assign out = bus[5:4];
+  // out = bus[5:4]
+  buf g_out0(out[0], bus[4]);
+  buf g_out1(out[1], bus[5]);
 endmodule

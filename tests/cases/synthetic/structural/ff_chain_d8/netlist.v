@@ -1,10 +1,6 @@
 `timescale 1ns/1ps
-// Simple DFF with async active-low reset for gate-level simulation
-module dff_r(input CLK, input D, input RST_N, output reg Q);
-  initial Q = 1'b0;
-  always @(posedge CLK or negedge RST_N)
-    if (!RST_N) Q <= 1'b0;
-    else Q <= D;
+// Black-box DFF with async active-low reset (leaf cell for x-tracer)
+module dff_r(input CLK, input D, input RST_N, output Q);
 endmodule
 
 `timescale 1ns/1ps
@@ -23,6 +19,7 @@ module ff_chain(input clk, rst_n, d, output q_out);
   dff_r ff5 (.CLK(clk), .D(q4), .RST_N(rst_n), .Q(q5));
   wire q6;
   dff_r ff6 (.CLK(clk), .D(q5), .RST_N(rst_n), .Q(q6));
+  wire q7;
   dff_r ff7 (.CLK(clk), .D(q6), .RST_N(rst_n), .Q(q7));
-  assign q_out = q7;
+  buf g_out(q_out, q7);
 endmodule
