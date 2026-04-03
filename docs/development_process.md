@@ -6,7 +6,7 @@ Gate-level simulation (GLS) on real SoCs produces X values -- unknown logic stat
 
 That is the question x-tracer was built to answer: given a signal that is X at time T in a VCD waveform, trace backward through a gate-level netlist to find the root cause.
 
-The target was not a toy. It was a real TSMC 22nm ARM Cortex-A55 SoC -- 3.3 million gates, 480MB flat netlist, multi-gigabyte VCD files from Cadence Xcelium simulations with `-xprop F` (full X propagation mode).
+The target was not a toy. It was a real 22nm ARM Cortex-A55 SoC -- 3.3 million gates, 480MB flat netlist, multi-gigabyte VCD files from Cadence Xcelium simulations with `-xprop F` (full X propagation mode).
 
 ---
 
@@ -38,9 +38,9 @@ A regex-based line-by-line parser was built instead (`fast_parser.py`). It reads
 
 ---
 
-## Phase 3: TSMC Cell Names Are Not What You Think
+## Phase 3: Standard Cell Names Are Not What You Think
 
-Real TSMC 22nm cell names look like this:
+Real 22nm standard cell names look like this:
 
 ```
 NAND2_X1M_A9PP140ZTH_C30
@@ -48,11 +48,11 @@ NAND2_X1M_A9PP140ZTH_C30
 
 The structure is `FUNCTION_XDRIVE_TECHSUFFIX`. To determine a cell's logical function, you strip the drive strength suffix and the technology trailer. A NAND2 is a NAND2 regardless of whether it is X1M or X2B or X4A.
 
-The initial regex for stripping drive strength matched `_X\d+[BM]_`. This worked for the cells that showed up in early testing. Then a blind validator agent -- a separate Claude instance running automated checks against the full cell library -- discovered that TSMC cells also use drive suffixes like `_X1A_`, `_X2BB_`, and `_X3XB_`. The regex was only matching `[BM]` when it needed `[A-Z]` (or more precisely, one or more uppercase letters after the digit).
+The initial regex for stripping drive strength matched `_X\d+[BM]_`. This worked for the cells that showed up in early testing. Then a blind validator agent -- a separate Claude instance running automated checks against the full cell library -- discovered that the cells also use drive suffixes like `_X1A_`, `_X2BB_`, and `_X3XB_`. The regex was only matching `[BM]` when it needed `[A-Z]` (or more precisely, one or more uppercase letters after the digit).
 
 Commit `bf6347f` fixed this: "Fix drive strength regex: accept A/B/M/etc suffixes (validator-found bug)." A one-character regex change that would have silently caused every cell with an `A` or `XB` suffix to be treated as an unknown cell type, falling back to conservative all-inputs-are-causal tracing instead of precise backward cause analysis.
 
-Additional cell support was needed for `PREICG` (pre-integrated clock gating) cells, and for stripping inverted-input suffixes that TSMC appends to cell names.
+Additional cell support was needed for `PREICG` (pre-integrated clock gating) cells, and for stripping inverted-input suffixes appended to cell names.
 
 ---
 
@@ -255,7 +255,7 @@ The final test suite: 26 SoC-level trace tests across 7 subsystems (GPIO, reset,
 
 **Brainstorm agents solve hard problems.** When the LFSR feedback loop had me stuck, launching three parallel brainstorm agents and taking the consensus answer (pre-edge D sampling) broke the logjam. Two out of three agents converged on the same solution independently -- a strong signal that it was the right answer.
 
-**Blind validators catch what humans miss.** The TSMC drive strength regex bug (`[BM]` instead of `[A-Z]`) was invisible during development because the test circuits happened to use only B and M suffix cells. A validator agent running against the full cell library found it immediately.
+**Blind validators catch what humans miss.** The drive strength regex bug (`[BM]` instead of `[A-Z]`) was invisible during development because the test circuits happened to use only B and M suffix cells. A validator agent running against the full cell library found it immediately.
 
 **Real SoC VCDs are a different beast.** Bus-level values lag behind per-bit DFF outputs. Escaped identifiers appear without warning. Multi-bit DFFs have indexed port names. Event types crash Rust parsers. Every assumption validated on synthetic VCDs broke on real Xcelium output.
 

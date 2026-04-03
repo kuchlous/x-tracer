@@ -57,7 +57,7 @@ Tests the `GateModel` class covering `forward()` (compute output from inputs) an
 - **Adders** (`ha`, `fa`, `maj3`): 4 tests -- half adder, full adder, majority gate
 - **Unknown cell fallback**: 5 tests -- conservative: any X input -> X output, all X ports returned as causes
 
-**TSMC / ARM Artisan Cell Recognition (16 tests)**:
+**Standard Cell Recognition (16 tests)**:
 
 - `strip_cell_name`: `AND2_X1M_A9PP140ZTH_C30` -> `and2`, handles drive suffixes (`X0P5B`, `X1M`)
 - `identify_cell` for B/XB/BB suffixed cells: `NAND2B`, `AOI21B`, `OR2BB`, `NOR3B` recognized correctly
@@ -127,7 +127,7 @@ Tests the regex-based `parse_netlist_fast` for flat post-P&R netlists.
 | `TestFastParserHierarchy` | 2 | Sub-module remapping (`sub_mod.u0` -> `top.inst_a.u0`), auto-detect top |
 | `TestFastParserAssign` | 2 | Simple assign, bus-indexed assign (`Y[0] = A`) |
 
-TSMC cell recognition: The fast parser handles named-port instantiations like `AND2_X1M_A9PP140ZTH_C30 u0 (.A(sig), .B(sig), .Y(out));` and correctly classifies output ports (Y, Z, ZN, Q, QN, S, CO, COUT) vs input ports.
+Standard cell recognition: The fast parser handles named-port instantiations like `AND2_X1M_A9PP140ZTH_C30 u0 (.A(sig), .B(sig), .Y(out));` and correctly classifies output ports (Y, Z, ZN, Q, QN, S, CO, COUT) vs input ports.
 
 ### 2.5 CLI (29 tests) -- `test_cli.py`
 
@@ -281,13 +281,13 @@ Five purpose-built designs in `tests/cases/stress_edge/`, each targeting a speci
 
 ## 6. SoC End-to-End Tests
 
-Real-world validation against a TSMC 22nm ARM Cortex-A55 SoC.
+Real-world validation against a 22nm ARM Cortex-A55 SoC.
 
 ### 6.1 SoC Environment
 
 | Parameter | Value |
 |-----------|-------|
-| Technology | TSMC 22nm (A9PP140ZTH/ZTL cells) |
+| Technology | 22nm (A9PP140ZTH/ZTL cells) |
 | Design | ARM Cortex-A55 based SoC (`rjn_soc_top`) |
 | Netlist | `rjn_soc_top.Fill_uniquify.v` -- 480 MB flat post-P&R |
 | Top module | `rjn_soc_top` |

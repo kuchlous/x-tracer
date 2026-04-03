@@ -11,10 +11,10 @@ X-Tracer is a backward X-value root cause tracer for gate-level simulations. It 
 **Output:**
 - Cause tree from the query signal to one or more root causes, rendered as text, JSON, or Graphviz DOT
 
-**Target scale:** TSMC 22nm ARM Cortex-A55 SoC
+**Target scale:** 22nm ARM Cortex-A55 SoC
 - 480 MB flat Verilog netlist, 68K+ modules, 3.2 million gate instances
 - 5.5 GB VCD waveform, 28 million signals
-- TSMC 22nm ARM Artisan standard cell library (naming: `AND2_X1M_A9PP140ZTH_C30`, `DFFQNAA2W_X0P5B_A9PP140ZTH_C35`)
+- 22nm standard cell library (naming: `AND2_X1M_A9PP140ZTH_C30`, `DFFQNAA2W_X0P5B_A9PP140ZTH_C35`)
 
 **User workflow:**
 1. Run gate-level simulation; it fails with X on a checker output.
@@ -99,7 +99,7 @@ The parser builds a hierarchy mapping via BFS from the top module:
 3. For each module, it computes the full instance path: e.g., module `rjn_soc_top` maps to path `rjn_soc_top`, its child `inst_a` of type `sub_mod_A` maps to `rjn_soc_top.inst_a`
 4. `_remap_graph_hierarchy()` replaces all module-name prefixes in gate instance paths and pin signal paths with the hierarchical instance path, then rebuilds the signal maps
 
-### TSMC Cell Recognition
+### Standard Cell Recognition
 
 The parser does not need to recognize cell types -- it treats everything not in `defined_modules` as a leaf cell. Cell type recognition happens in the Gate Model layer during tracing, not during parsing.
 
@@ -237,7 +237,7 @@ Sequential element tracing follows a strict priority order:
 
 2. **Pre-edge D sampling (T-1).** When `edge_time == time`, the VCD shows D's post-edge value (combinational outputs update at the same timestamp as the clock edge). But in real hardware, the DFF captures D from *before* the edge. The tracer samples D at `edge_time - 1` to get the pre-edge value. This breaks same-timestamp feedback loops (e.g., LFSR chains where every DFF Q and D transition simultaneously in the VCD).
 
-3. **Multi-bit DFF D/Q matching.** TSMC cells like `DFFQNAA2W` have multiple D/Q pairs: `D0/QN0`, `D1/QN1`. When tracing `QN0`, the tracer matches the Q output port name suffix to find `D0` rather than the default D port. It does this by iterating over the gate's output ports to find which Q port drives the traced signal, extracting the trailing digit, and looking for `D<digit>` in the inputs.
+3. **Multi-bit DFF D/Q matching.** Multi-bit cells like `DFFQNAA2W` have multiple D/Q pairs: `D0/QN0`, `D1/QN1`. When tracing `QN0`, the tracer matches the Q output port name suffix to find `D0` rather than the default D port. It does this by iterating over the gate's output ports to find which Q port drives the traced signal, extracting the trailing digit, and looking for `D<digit>` in the inputs.
 
 4. **Fallback: D at query time.** If D was not X at the clock edge but Q is X, the tracer checks D at the current query time. This handles cases where the X arrived after the edge but the VCD ordering makes it appear X.
 
@@ -301,9 +301,9 @@ Truth tables are explicit Python dicts for 2-input operations (AND2, OR2, XOR2, 
 
 **Tier 4: Conservative fallback.** For unrecognized cells, if any input is X, output is X.
 
-### TSMC Cell Library with Suffix Stripping
+### Cell Library with Suffix Stripping
 
-`strip_cell_name()` normalizes TSMC/ARM Artisan cell names to base functions:
+`strip_cell_name()` normalizes standard cell names to base functions:
 
 ```
 AND2_X1M_A9PP140ZTH_C30   ->  and2
@@ -315,7 +315,7 @@ NAND2B_X1M_A9PP140ZTH_C30 ->  nand2  (B suffix stripped)
 
 The stripping handles two naming conventions:
 1. **Prefix-based** (Sky130, GF180, ASAP7): `sky130_fd_sc_hd__and2_1` strips prefix and `_1` drive suffix
-2. **Suffix-based** (TSMC/Artisan): strips `_X<drive><type>_A<tech>_C<corner>` via regex `_TSMC_SUFFIX_RE`
+2. **Suffix-based**: strips `_X<drive><type>_A<tech>_C<corner>` via regex
 
 Inverted-input suffixes (`B`, `BB`, `XB`) are stripped after base name extraction: `NAND2B` -> `nand2b` -> `nand2`.
 
