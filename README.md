@@ -37,6 +37,7 @@ No open-source tool for this exists.
 ## Installation
 
 Requires Python 3.10+ and a C++ compiler (for pyslang wheels).
+For fast VCD parsing (optional), a Rust toolchain is also needed — install via [rustup](https://rustup.rs).
 
 ```bash
 # Clone
@@ -44,7 +45,7 @@ git clone https://github.com/<your-org>/x-tracer.git
 cd x-tracer
 
 # Install dependencies
-pip install pyslang pyvcd click
+pip install pyslang pyvcd click pytest
 
 # Optional: install pywellen for fast VCD parsing (10-50x faster)
 # Requires Rust toolchain (https://rustup.rs) and maturin

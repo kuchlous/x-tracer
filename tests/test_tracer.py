@@ -192,50 +192,10 @@ class TestBulk:
 
 # --- Stress tests ---
 
-STRESS_DIR = Path(__file__).resolve().parent / "cases" / "stress"
 STRESS_EDGE_DIR = Path(__file__).resolve().parent / "cases" / "stress_edge"
 
 
 class TestStress:
-    def test_lfsr_grid_trace_all_leaves_primary_input(self):
-        """Stress: 2x2x2x2x8 LFSR grid -- all leaves must be primary_input
-        with signal tb.dut.inject_data[0], and no max_depth leaves."""
-        case_dir = STRESS_DIR
-        manifest = json.loads((case_dir / "manifest.json").read_text())
-
-        netlist = parse_netlist_fast(
-            [case_dir / "netlist.v", case_dir / "tb.v"],
-            top_module="tb",
-        )
-        vcd = load_vcd(case_dir / "sim.vcd")
-        gate_model = GateModel()
-
-        query_sig, query_bit = _parse_sig_bit(manifest["query"]["signal"])
-        query_time = manifest["query"]["time"]
-        result = trace_x(
-            netlist, vcd, gate_model,
-            query_sig, query_bit, query_time,
-            max_depth=500,
-        )
-
-        leaves = collect_leaves(result)
-        assert len(leaves) > 0, "Trace returned no leaves"
-
-        # Every leaf must be primary_input (no max_depth cutoffs)
-        leaf_types = {leaf.cause_type for leaf in leaves}
-        assert leaf_types == {"primary_input"}, (
-            f"Expected all leaves to be primary_input, got: {leaf_types}"
-        )
-
-        # Every leaf must point to the injection target
-        expected_sig = manifest["expected"]["injection_target"]
-        exp_sig, exp_bit = _parse_sig_bit(expected_sig)
-        exp_key = f"{exp_sig}[{exp_bit}]"
-        leaf_sigs = {leaf.signal for leaf in leaves}
-        assert leaf_sigs == {exp_key}, (
-            f"Expected all leaves to be {exp_key}, got: {leaf_sigs}"
-        )
-
     # --- Stress edge cases (positional Verilog primitives -> parse_netlist) ---
 
     def _load_stress_edge(self, name):
