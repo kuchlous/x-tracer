@@ -21,6 +21,7 @@ class XCause:
                          # max_depth, cycle
     gate: Optional[Gate] = None
     children: list["XCause"] = field(default_factory=list)
+    top_level_port: Optional[str] = None  # for primary_input: connected top-level port
 
 
 def trace_x(
@@ -190,7 +191,9 @@ def _trace(
 
     # No driver → primary input
     if len(drivers) == 0:
-        node = XCause(signal=sig_str, time=time, cause_type="primary_input")
+        top_port = netlist.find_top_level_port(signal)
+        node = XCause(signal=sig_str, time=time, cause_type="primary_input",
+                       top_level_port=top_port)
     elif len(drivers) > 1:
         node = _handle_multi_driver(
             netlist, vcd, gate_model, signal, bit, time,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import defaultdict, deque
 
 from .gate import Gate
 
@@ -22,6 +22,7 @@ class NetlistGraph:
         self._signal_to_drivers: dict[str, list[Gate]] = defaultdict(list)
         self._signal_to_fanout: dict[str, list[Gate]] = defaultdict(list)
         self._all_signals: set[str] = set()
+        self.top_module: str | None = None
 
     def add_gate(self, gate: Gate) -> None:
         """Register a gate and update signal connectivity maps."""
@@ -81,6 +82,67 @@ class NetlistGraph:
         """Return set of all signal paths in the netlist."""
         return set(self._all_signals)
 
+    def get_top_level_ports(self) -> set[str]:
+        """Return all top-level port signals (no drivers, directly under top_module)."""
+        if self.top_module is None:
+            return set()
+        prefix = self.top_module + '.'
+        ports = set()
+        for sig in self._all_signals:
+            if not sig.startswith(prefix):
+                continue
+            # Must be directly under top_module (no further dots after prefix)
+            rest = sig[len(prefix):]
+            # Strip bit index for check
+            base = rest.split('[')[0]
+            if '.' not in base and not self._signal_to_drivers.get(sig):
+                ports.add(sig)
+        return ports
+
+    def find_top_level_port(self, signal: str, max_depth: int = 200) -> str | None:
+        """Find the top-level port connected to a primary_input signal.
+
+        BFS backward from the signal through driver gates. At each step,
+        follows gate inputs to find driverless signals at the top level.
+        Returns the top-level port name, or None if not found.
+        """
+        if self.top_module is None:
+            return None
+
+        prefix = self.top_module + '.'
+
+        def _is_top_port(s: str) -> bool:
+            if not s.startswith(prefix):
+                return False
+            rest = s[len(prefix):].split('[')[0]
+            return '.' not in rest
+
+        # If signal is already a top-level port, return it
+        if _is_top_port(signal):
+            return signal
+
+        # BFS backward: follow drivers to their inputs
+        visited: set[str] = set()
+        queue = deque()
+        queue.append((signal, 0))
+        while queue:
+            sig, depth = queue.popleft()
+            if depth > max_depth or sig in visited:
+                continue
+            visited.add(sig)
+            if _is_top_port(sig):
+                return sig
+            drivers = self._signal_to_drivers.get(sig, [])
+            if not drivers and '[' in sig:
+                base = sig[:sig.rindex('[')]
+                drivers = self._signal_to_drivers.get(base, [])
+            for gate in drivers:
+                for pin in gate.inputs.values():
+                    inp_sig = pin.signal if pin.bit is None else f"{pin.signal}[{pin.bit}]"
+                    if inp_sig not in visited:
+                        queue.append((inp_sig, depth + 1))
+        return None
+
     def get_input_cone(self, signal: str, max_depth: int | None = None) -> set[str]:
         """Return all signals in the backward cone of the given signal.
 
@@ -93,7 +155,6 @@ class NetlistGraph:
         """
         visited: set[str] = set()
         # BFS with depth tracking
-        from collections import deque
         queue: deque[tuple[str, int]] = deque()
         queue.append((signal, 0))
         while queue:

@@ -20,7 +20,10 @@ def _format_text_recursive(node: XCause, indent: int, lines: list[str]) -> None:
     gate_info = ""
     if node.gate is not None:
         gate_info = f" (gate={node.gate.cell_type}, inst={node.gate.instance_path})"
-    lines.append(f"{prefix}[{node.cause_type}] {node.signal} @ t={node.time}{gate_info}")
+    port_info = ""
+    if node.top_level_port is not None:
+        port_info = f" -> top-level port: {node.top_level_port}"
+    lines.append(f"{prefix}[{node.cause_type}] {node.signal} @ t={node.time}{gate_info}{port_info}")
     for child in node.children:
         _format_text_recursive(child, indent + 2, lines)
 
@@ -37,6 +40,8 @@ def _node_to_dict(node: XCause) -> dict[str, Any]:
             "cell_type": node.gate.cell_type,
             "instance_path": node.gate.instance_path,
         }
+    if node.top_level_port is not None:
+        d["top_level_port"] = node.top_level_port
     if node.children:
         d["children"] = [_node_to_dict(c) for c in node.children]
     else:

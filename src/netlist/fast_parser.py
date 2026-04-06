@@ -653,6 +653,14 @@ def parse_netlist_fast(
             defined_modules, submodule_insts, top_module)
         if module_to_path:
             _remap_graph_hierarchy(graph, module_to_path)
+            # Record the top module name for top-level port detection
+            for mod, path in module_to_path.items():
+                if path == mod:  # top module maps to itself
+                    graph.top_module = mod
+                    break
+
+    if graph.top_module is None and top_module is not None:
+        graph.top_module = top_module
 
     total_elapsed = time.time() - overall_t0
     total_gates = len(graph._gates)

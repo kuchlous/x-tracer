@@ -163,6 +163,7 @@ def parse_netlist(
         if top_module is not None and top_inst.name != top_module:
             continue
         logger.info("  Walking top instance: %s", top_inst.name)
+        graph.top_module = top_inst.name
         _walk_instance(top_inst, graph, structural_cache, gate_counter)
 
     walk_elapsed = time.time() - t0
