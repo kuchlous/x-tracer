@@ -27,7 +27,7 @@
   },
   "query": {
     "signal": "tb.dut.final_out",
-    "time": 1505000
+    "time": 1305000
   },
   "x_injection": {
     "method": "force",

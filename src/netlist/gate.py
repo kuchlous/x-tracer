@@ -25,3 +25,5 @@ class Gate:
     q_port: str | None = None
     reset_port: str | None = None
     set_port: str | None = None
+    source_file: str | None = None   # netlist file path
+    source_line: int | None = None   # line number in netlist file

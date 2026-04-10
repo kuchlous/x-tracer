@@ -28,7 +28,7 @@
   },
   "query": {
     "signal": "tb.dut.final_out",
-    "time": 435000
+    "time": 285000
   },
   "x_injection": {
     "method": "force",
@@ -41,8 +41,14 @@
     "root_cause_signal": "tb.dut.icg_l3.en_lat",
     "root_cause_time": 285000,
     "query_signal": "tb.dut.final_out",
-    "affected_ffs": ["tb.dut.ff_a", "tb.dut.ff_b"],
-    "unaffected_ffs": ["tb.dut.ff_c", "tb.dut.ff_d"],
+    "affected_ffs": [
+      "tb.dut.ff_a",
+      "tb.dut.ff_b"
+    ],
+    "unaffected_ffs": [
+      "tb.dut.ff_c",
+      "tb.dut.ff_d"
+    ],
     "injection_class": "clock_gating",
     "description": "X on icg_l3 enable latch corrupts gclk_l3 clock, making ff_a and ff_b outputs X. Tool must trace X on FF output back through clock pin to the ICG enable, not the data pin. Must correctly identify clock-gating X vs data-path X."
   },

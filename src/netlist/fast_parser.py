@@ -353,8 +353,10 @@ def parse_netlist_fast(
         accumulating = False
         accum_parts: list[str] = []
 
+        file_str = str(p)
         with open(p, 'r', errors='replace', buffering=1024*1024) as f:
-            for raw_line in f:
+            accum_start_line = 0
+            for line_num, raw_line in enumerate(f, 1):
                 stripped = raw_line.strip()
 
                 if not stripped:
@@ -483,6 +485,8 @@ def parse_netlist_fast(
                         g.q_port = None
                         g.reset_port = None
                         g.set_port = None
+                    g.source_file = file_str
+                    g.source_line = accum_start_line
                     graph_add_gate(g)
 
                     gate_count += 1
@@ -633,6 +637,8 @@ def parse_netlist_fast(
                             g.q_port = None
                             g.reset_port = None
                             g.set_port = None
+                        g.source_file = file_str
+                        g.source_line = line_num
                         graph_add_gate(g)
 
                         gate_count += 1
@@ -642,6 +648,7 @@ def parse_netlist_fast(
                     else:
                         # Multi-line -- start accumulation
                         accumulating = True
+                        accum_start_line = line_num
                         accum_parts = [stripped]
 
         elapsed = time.time() - t0

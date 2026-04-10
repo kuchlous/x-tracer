@@ -106,6 +106,43 @@ class VCDDatabase:
 
         return None
 
+    def find_x_start(self, signal: str, bit: int, at: int) -> int | None:
+        """Find the start of the X window containing time `at`.
+
+        Walks backward from `at` through transitions to find the time when
+        signal[bit] first became X in the current continuous X window.
+        Returns None if signal[bit] is not X at `at`.
+        """
+        tlist = self._transitions.get(signal)
+        if tlist is None:
+            raise KeyError(f"Signal '{signal}' not found in VCD")
+        times = self._times[signal]
+
+        # Find transition at or before `at`
+        idx = bisect.bisect_right(times, at) - 1
+        if idx < 0:
+            # Before first transition — X since the start
+            return 0
+
+        # Verify signal is actually X at `at`
+        bit_val = _extract_bit(tlist[idx][1], bit)
+        if bit_val not in ('x', 'z'):
+            return None
+
+        # Walk backward to find where this X window began
+        for i in range(idx, 0, -1):
+            bit_cur = _extract_bit(tlist[i][1], bit)
+            bit_prev = _extract_bit(tlist[i - 1][1], bit)
+            if bit_cur in ('x', 'z') and bit_prev not in ('x', 'z'):
+                # Transition from non-X to X — this is the start
+                return tlist[i][0]
+
+        # X all the way back to the first transition (or before)
+        bit_first = _extract_bit(tlist[0][1], bit)
+        if bit_first in ('x', 'z'):
+            return 0  # X since before first transition
+        return tlist[0][0]
+
     def find_edge(self, signal: str, bit: int, edge: str, before: int) -> int | None:
         """Find last rising ('rise') or falling ('fall') edge of signal[bit] before time.
 
@@ -192,6 +229,9 @@ class PrefixMappedVCD(VCDDatabase):
     def first_x_time(self, signal: str, bit: int, after: int = 0) -> int | None:
         return self._inner.first_x_time(self._to_vcd(signal), bit, after)
 
+    def find_x_start(self, signal: str, bit: int, at: int) -> int | None:
+        return self._inner.find_x_start(self._to_vcd(signal), bit, at)
+
     def find_edge(self, signal: str, bit: int, edge: str, before: int) -> int | None:
         return self._inner.find_edge(self._to_vcd(signal), bit, edge, before)
 
@@ -259,12 +299,10 @@ def load_vcd(vcd_path: Path | str, signals: set[str] | None = None) -> VCDDataba
     """
     vcd_path = Path(vcd_path)
 
-    # Fast path: if specific signals requested, try the Rust streaming backend
-    if signals:
-        try:
-            return load_vcd_fast_rust(vcd_path, signals)
-        except Exception:
-            pass
+    # NOTE: Rust streaming backend (load_vcd_fast_rust) is disabled as the
+    # default path because extract_signals returns incorrect transitions for
+    # bus signals when filtering.  Use load_vcd_fast_rust explicitly only
+    # after the bug is fixed.
 
     try:
         from .pywellen_backend import load as _load_pywellen

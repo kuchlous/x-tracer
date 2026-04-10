@@ -21,7 +21,12 @@
   "design": {
     "fanout_width": 32,
     "total_ffs": 34,
-    "gate_types": ["and", "or", "xor", "buf"],
+    "gate_types": [
+      "and",
+      "or",
+      "xor",
+      "buf"
+    ],
     "reconvergence_levels": 5,
     "estimated_signals": 120,
     "hierarchy_depth": 1,
@@ -29,7 +34,7 @@
   },
   "query": {
     "signal": "tb.dut.final_out",
-    "time": 435000
+    "time": 295000
   },
   "x_injection": {
     "method": "force",

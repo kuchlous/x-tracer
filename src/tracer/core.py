@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -74,9 +75,20 @@ def trace_x(
 
     memo: dict[tuple[str, int, int], XCause] = {}
     sig_memo: dict[tuple[str, int], XCause] = {}
+    leaf_cache: dict[tuple[str, int], list[XCause]] = {}
     exploring: set[tuple[str, int, int]] = set()
-    return _trace(netlist, vcd, gate_model, signal, bit, time,
-                  max_depth, 0, exploring, memo, sig_memo)
+
+    # Deep traces (e.g. 128-DFF LFSR grid at end of simulation) can exceed
+    # Python's default recursion limit.  Temporarily raise it.
+    old_limit = sys.getrecursionlimit()
+    needed = max_depth * 4 + 1000  # ~4 frames per trace level + headroom
+    if needed > old_limit:
+        sys.setrecursionlimit(needed)
+    try:
+        return _trace(netlist, vcd, gate_model, signal, bit, time,
+                      max_depth, 0, exploring, memo, sig_memo, leaf_cache)
+    finally:
+        sys.setrecursionlimit(old_limit)
 
 
 def _sig_key(signal: str, bit: int) -> str:
@@ -148,6 +160,7 @@ def _trace(
     exploring: set[tuple[str, int, int]],
     memo: dict[tuple[str, int, int], XCause],
     sig_memo: dict[tuple[str, int], XCause] | None = None,
+    leaf_cache: dict[tuple[str, int], list[XCause]] | None = None,
 ) -> XCause:
     """Recursive backward trace using three-color DFS.
 
@@ -164,16 +177,25 @@ def _trace(
     if key in memo:
         return memo[key]
 
-    # Signal-level memoization — reuse combinational results from a different time.
-    if sig_memo is not None:
+    # Signal-level memoization — reuse results from a different time.
+    # The netlist topology is fixed, so the same signal traced at a different
+    # time produces a structurally identical cause tree (same gates, same
+    # connections, same root causes).  This is critical for sequential elements:
+    # without it, tracing the same DFF at every clock edge causes exponential
+    # blowup on designs like LFSRs where X propagates through many cycles.
+    # We attach the cached LEAF nodes directly (flattened) instead of sharing
+    # the full subtree, which would cause exponential blowup during JSON
+    # serialization (shared references get expanded into full copies).
+    # Only reuse completed results (skip max_depth — a deeper trace may go further).
+    if sig_memo is not None and leaf_cache is not None:
         sig_key = (signal, bit)
         if sig_key in sig_memo:
             prev = sig_memo[sig_key]
-            if prev.cause_type not in ('sequential_capture', 'clock_x',
-                                        'async_control_x', 'uninit_ff'):
+            if prev.cause_type != 'max_depth':
+                leaves = leaf_cache.get(sig_key, [])
                 node = XCause(signal=sig_str, time=time,
                               cause_type=prev.cause_type,
-                              gate=prev.gate, children=prev.children)
+                              gate=prev.gate, children=leaves)
                 memo[key] = node
                 return node
 
@@ -197,23 +219,24 @@ def _trace(
     elif len(drivers) > 1:
         node = _handle_multi_driver(
             netlist, vcd, gate_model, signal, bit, time,
-            drivers, max_depth, depth, exploring, memo, sig_memo)
+            drivers, max_depth, depth, exploring, memo, sig_memo, leaf_cache)
     elif drivers[0].is_sequential:
         node = _handle_sequential(
             netlist, vcd, gate_model, signal, bit, time,
-            drivers[0], max_depth, depth, exploring, memo, sig_memo)
+            drivers[0], max_depth, depth, exploring, memo, sig_memo, leaf_cache)
     else:
         node = _handle_combinational(
             netlist, vcd, gate_model, signal, bit, time,
-            drivers[0], max_depth, depth, exploring, memo, sig_memo)
+            drivers[0], max_depth, depth, exploring, memo, sig_memo, leaf_cache)
 
     # Mark black — remove from DFS stack, cache in memo
     exploring.discard(key)
     memo[key] = node
-    if sig_memo is not None and node.cause_type not in (
-        "sequential_capture", "clock_x", "async_control_x", "uninit_ff"
-    ):
-        sig_memo[(signal, bit)] = node
+    if sig_memo is not None and node.cause_type != "max_depth":
+        sig_key_w = (signal, bit)
+        sig_memo[sig_key_w] = node
+        if leaf_cache is not None:
+            leaf_cache[sig_key_w] = collect_leaves(node)
     return node
 
 
@@ -242,6 +265,7 @@ def _handle_sequential(
     exploring: set[tuple[str, int, int]],
     memo: dict[tuple[str, int, int], XCause],
     sig_memo: dict[tuple[str, int], XCause] | None = None,
+    leaf_cache: dict[tuple[str, int], list[XCause]] | None = None,
 ) -> XCause:
     """Handle sequential element (DFF/latch) tracing."""
     sig_str = _sig_key(signal, bit)
@@ -255,7 +279,7 @@ def _handle_sequential(
             ctrl_val = _vcd_get_bit(vcd, ctrl_sig, ctrl_bit, time, alt_signal=alt)
             if ctrl_val == 'x':
                 child = _trace(netlist, vcd, gate_model, ctrl_sig, ctrl_bit,
-                               time, max_depth, depth + 1, exploring, memo, sig_memo)
+                               time, max_depth, depth + 1, exploring, memo, sig_memo, leaf_cache)
                 return XCause(signal=sig_str, time=time,
                               cause_type="async_control_x",
                               gate=gate, children=[child])
@@ -269,7 +293,7 @@ def _handle_sequential(
         clk_val = _vcd_get_bit(vcd, clk_sig, clk_bit, time, alt_signal=alt)
         if clk_val == 'x':
             child = _trace(netlist, vcd, gate_model, clk_sig, clk_bit,
-                           time, max_depth, depth + 1, exploring, memo, sig_memo)
+                           time, max_depth, depth + 1, exploring, memo, sig_memo, leaf_cache)
             return XCause(signal=sig_str, time=time,
                           cause_type="clock_x",
                           gate=gate, children=[child])
@@ -315,7 +339,7 @@ def _handle_sequential(
         d_val_now = _vcd_get_bit(vcd, d_sig, d_bit, time, alt_signal=d_alt)
         if d_val_now == 'x':
             child = _trace(netlist, vcd, gate_model, d_sig, d_bit,
-                           time, max_depth, depth + 1, exploring, memo, sig_memo)
+                           time, max_depth, depth + 1, exploring, memo, sig_memo, leaf_cache)
             return XCause(signal=sig_str, time=time,
                           cause_type="uninit_ff",
                           gate=gate, children=[child])
@@ -336,8 +360,21 @@ def _handle_sequential(
     d_alt = f"{gate.instance_path}.{d_port}"
     d_val = _vcd_get_bit(vcd, d_sig, d_bit, d_sample_time, alt_signal=d_alt)
     if d_val == 'x':
+        # Temporal skip: jump to the start of the CURRENT X window on D
+        # rather than walking back one clock cycle at a time.  This prevents
+        # exponential blowup on designs like LFSRs where X propagates through
+        # many cycles.  We use find_x_start (not first_x_time) to correctly
+        # handle signals that went X → known → X: only the X window that
+        # contains d_sample_time is causally relevant.
+        d_trace_time = d_sample_time
+        try:
+            x_start = vcd.find_x_start(d_sig, d_bit, d_sample_time)
+            if x_start is not None and x_start < d_sample_time:
+                d_trace_time = x_start
+        except KeyError:
+            pass
         child = _trace(netlist, vcd, gate_model, d_sig, d_bit,
-                       d_sample_time, max_depth, depth + 1, exploring, memo, sig_memo)
+                       d_trace_time, max_depth, depth + 1, exploring, memo, sig_memo, leaf_cache)
         return XCause(signal=sig_str, time=time,
                       cause_type="sequential_capture",
                       gate=gate, children=[child])
@@ -349,8 +386,16 @@ def _handle_sequential(
     #    (handles pipeline stages where the X pulse has passed through)
     d_val_now = _vcd_get_bit(vcd, d_sig, d_bit, time, alt_signal=d_alt)
     if d_val_now == 'x':
+        # Also temporal-skip for this path
+        d_trace_time2 = time
+        try:
+            x_start2 = vcd.find_x_start(d_sig, d_bit, time)
+            if x_start2 is not None and x_start2 < time:
+                d_trace_time2 = x_start2
+        except KeyError:
+            pass
         child = _trace(netlist, vcd, gate_model, d_sig, d_bit,
-                       time, max_depth, depth + 1, exploring, memo, sig_memo)
+                       d_trace_time2, max_depth, depth + 1, exploring, memo, sig_memo, leaf_cache)
         return XCause(signal=sig_str, time=time,
                       cause_type="sequential_capture",
                       gate=gate, children=[child])
@@ -388,7 +433,7 @@ def _handle_sequential(
             if d_val_earlier == 'x':
                 child = _trace(netlist, vcd, gate_model, d_sig, d_bit,
                                earlier_d_time, max_depth, depth + 1,
-                               exploring, memo, sig_memo)
+                               exploring, memo, sig_memo, leaf_cache)
                 return XCause(signal=sig_str, time=time,
                               cause_type="sequential_capture",
                               gate=gate, children=[child])
@@ -469,6 +514,7 @@ def _handle_combinational(
     exploring: set[tuple[str, int, int]],
     memo: dict[tuple[str, int, int], XCause],
     sig_memo: dict[tuple[str, int], XCause] | None = None,
+    leaf_cache: dict[tuple[str, int], list[XCause]] | None = None,
 ) -> XCause:
     """Handle combinational gate / continuous assign tracing."""
     sig_str = _sig_key(signal, bit)
@@ -494,7 +540,7 @@ def _handle_combinational(
             for port_name, pin in gate.inputs.items():
                 inp_sig, inp_bit = _pin_signal_bit(pin)
                 child = _trace(netlist, vcd, gate_model, inp_sig, inp_bit,
-                               time, max_depth, depth + 1, exploring, memo, sig_memo)
+                               time, max_depth, depth + 1, exploring, memo, sig_memo, leaf_cache)
                 children.append(child)
             return XCause(signal=sig_str, time=time,
                           cause_type="x_propagation", gate=gate, children=children)
@@ -513,7 +559,7 @@ def _handle_combinational(
             pin = gate.inputs[port]
             inp_sig, inp_bit = _pin_signal_bit(pin)
             child = _trace(netlist, vcd, gate_model, inp_sig, inp_bit,
-                           time, max_depth, depth + 1, exploring, memo, sig_memo)
+                           time, max_depth, depth + 1, exploring, memo, sig_memo, leaf_cache)
             children.append(child)
         return XCause(signal=sig_str, time=time,
                       cause_type="unknown_cell", gate=gate, children=children)
@@ -534,7 +580,7 @@ def _handle_combinational(
         pin = gate.inputs[port]
         inp_sig, inp_bit = _pin_signal_bit(pin)
         child = _trace(netlist, vcd, gate_model, inp_sig, inp_bit,
-                       time, max_depth, depth + 1, exploring, memo, sig_memo)
+                       time, max_depth, depth + 1, exploring, memo, sig_memo, leaf_cache)
         children.append(child)
 
     return XCause(signal=sig_str, time=time,
@@ -554,6 +600,7 @@ def _handle_multi_driver(
     exploring: set[tuple[str, int, int]],
     memo: dict[tuple[str, int, int], XCause],
     sig_memo: dict[tuple[str, int], XCause] | None = None,
+    leaf_cache: dict[tuple[str, int], list[XCause]] | None = None,
 ) -> XCause:
     """Handle multi-driver net."""
     sig_str = _sig_key(signal, bit)
@@ -571,7 +618,8 @@ def _handle_multi_driver(
             # Trace through this gate
             child = _handle_combinational(
                 netlist, vcd, gate_model, signal, bit, time,
-                gate, max_depth, depth + 1, exploring, memo)
+                gate, max_depth, depth + 1, exploring, memo,
+                sig_memo, leaf_cache)
             children.append(child)
 
     if not children:

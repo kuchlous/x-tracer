@@ -1,0 +1,44 @@
+{
+  "id": "stress_edge_x_window_gap",
+  "category": "stress_edge",
+  "generation": "manual",
+  "netlist": {
+    "file": "netlist.v",
+    "level": "gate"
+  },
+  "vcd": "sim.vcd",
+  "testbench": "tb.v",
+  "sim_env": {
+    "simulator": "xcelium",
+    "version": "24.09",
+    "timescale": "1ns/1ps"
+  },
+  "timing": {
+    "clock_period_ticks": 10000,
+    "clock_edge": "posedge"
+  },
+  "design": {
+    "description": "DFF with D driven by mux between src_a and src_b. D goes X (from src_a) then known then X (from src_b). Tests that temporal skip traces to the current X window root cause (src_b), not the first-ever X (src_a)."
+  },
+  "query": {
+    "signal": "tb.dut.final_out",
+    "time": 25000
+  },
+  "x_injection": {
+    "method": "force",
+    "target": "tb.dut.src_b",
+    "value": "1'bx",
+    "time": 18000,
+    "injection_class": "primary_input"
+  },
+  "expected": {
+    "injection_target": "tb.dut.src_b[0]",
+    "injection_time": 18000,
+    "query_signal": "tb.dut.final_out",
+    "query_time": 25000,
+    "injection_class": "primary_input",
+    "wrong_target_if_buggy": "tb.dut.src_a[0]"
+  },
+  "status": "golden",
+  "author": "manual"
+}

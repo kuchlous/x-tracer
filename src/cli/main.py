@@ -56,7 +56,9 @@ def parse_signal(signal_str: str) -> tuple[str, int]:
               help="VCD hierarchy prefix that maps to netlist top, e.g. 'rjn_top.u_rjn_soc_top'")
 @click.option("--fast-parser", is_flag=True, default=False,
               help="Use fast regex-based netlist parser (recommended for large netlists >10MB)")
-def cli(netlist, vcd, signal, query_time, output_format, max_depth, top_module, vcd_prefix, fast_parser):
+@click.option("--interactive", "-i", is_flag=True, default=False,
+              help="Interactive mode: step through the trace one level at a time")
+def cli(netlist, vcd, signal, query_time, output_format, max_depth, top_module, vcd_prefix, fast_parser, interactive):
     """X-Tracer: trace the root cause of X values in gate-level simulations."""
     # Parse signal
     sig_path, sig_bit = parse_signal(signal)
@@ -125,8 +127,18 @@ def cli(netlist, vcd, signal, query_time, output_format, max_depth, top_module, 
                     vcd_sig = sig
                 if vcd_sig in vcd_signals:
                     vcd_cone.add(vcd_sig)
+                elif '[' in vcd_sig:
+                    base = vcd_sig[:vcd_sig.rindex('[')]
+                    if base in vcd_signals:
+                        vcd_cone.add(base)
         else:
             vcd_cone = cone_signals & vcd_signals
+            # Also add bus-level VCD names for bit-indexed cone signals
+            for sig in cone_signals:
+                if '[' in sig and sig not in vcd_signals:
+                    base = sig[:sig.rindex('[')]
+                    if base in vcd_signals:
+                        vcd_cone.add(base)
 
         # Always include the query signal itself (it's in VCD space)
         if sig_path in vcd_signals:
@@ -219,10 +231,15 @@ def cli(netlist, vcd, signal, query_time, output_format, max_depth, top_module, 
         sys.exit(1)
 
     # Run tracer (in netlist space — PrefixMappedVCD handles VCD translation)
-    from src.tracer import trace_x
     from src.gates import GateModel
-
     gate_model = GateModel()
+
+    if interactive:
+        from src.cli.interactive import run_interactive
+        run_interactive(graph, vcd_db, gate_model, trace_sig, sig_bit, vcd_time)
+        return
+
+    from src.tracer import trace_x
     try:
         result = trace_x(graph, vcd_db, gate_model,
                          trace_sig, sig_bit, vcd_time,
