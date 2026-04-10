@@ -45,11 +45,13 @@ X-Tracer is a backward X-value root cause tracer for gate-level simulations. It 
              |                   |                   |
              +-------------------+-------------------+
                                  |
-                        +--------v---------+
-                        |   Tracer Core    |
-                        | (src/tracer/     |
-                        |  core.py)        |
-                        +------------------+
+                  +--------------+--------------+
+                  |                             |
+         +--------v---------+      +-----------v-----------+
+         |   Tracer Core    |      |   Interactive Mode    |
+         | (src/tracer/     |      | (src/cli/             |
+         |  core.py)        |      |  interactive.py)      |
+         +------------------+      +-----------------------+
 ```
 
 ### Data Flow
@@ -65,6 +67,8 @@ X-Tracer is a backward X-value root cause tracer for gate-level simulations. It 
 5. **Gate Model** (`src/gates/model.py`) provides 4-state logic evaluation (`forward()`) and backward causality analysis (`backward_causes()`). It handles Verilog primitives, recognized standard cells (via pattern matching), and unknown cells (conservative fallback).
 
 6. **Output Formatters** (`src/cli/formatters.py`) render the resulting `XCause` tree as indented text, JSON, or Graphviz DOT.
+
+7. **Interactive Mode** (`src/cli/interactive.py`), activated via `--interactive` / `-i`, provides a `cmd.Cmd`-based REPL for stepping through the trace one level at a time. Instead of running the full recursive trace, the user sees the current signal's driving gate, all input values, and can select which X-valued input to follow. This enables exploratory debugging on large designs where the full tree would be overwhelming.
 
 
 ## 3. Netlist Parser
@@ -88,6 +92,8 @@ The key insight is that flat Innovus netlists have an extremely regular structur
 - For sequential cells, classifies clock, D, Q, reset, and set ports by name matching against known port name sets
 
 Multi-line statements (where the instantiation spans multiple lines before the closing `;`) are accumulated in a buffer before processing.
+
+Each parsed `Gate` records its `source_file` and `source_line` -- the netlist file path and line number where the instantiation was found. This enables the interactive tracer and diagnostics to link traced gates back to the original netlist source.
 
 ### Hierarchy Remapping via BFS
 
@@ -124,6 +130,7 @@ Cadence netlists use Verilog escaped identifiers (`\name `) for signals with spe
 - `get_bit(signal, bit, time)` -- single-bit value (`'0'`, `'1'`, `'x'`; `'z'` mapped to `'x'`)
 - `find_edge(signal, bit, edge, before)` -- last rising/falling edge before a time
 - `first_x_time(signal, bit, after)` -- earliest time a signal becomes X
+- `find_x_start(signal, bit, at)` -- start of the X window containing time `at`
 - `get_transitions(signal)` -- raw transition list for a signal
 - `has_signal(signal)` -- existence check
 - `ps_to_vcd(ps)` / `vcd_to_ps(vcd_time)` -- timescale conversion
@@ -134,11 +141,11 @@ Internally, transitions are stored as sorted `list[tuple[int, str]]` per signal.
 
 The VCD loading system tries three backends in order of preference:
 
-1. **Rust streaming backend** (`xtracer_vcd.extract_signals`): A Rust extension module that streams through the VCD file once, decoding only the requested signals. Memory usage is proportional to the number of transitions in the target signals, not the file size. This is the fastest path for large VCDs (multi-GB) when loading a subset of signals.
+1. **pywellen backend** (`src/vcd/pywellen_backend.py`): Uses pywellen (or xtracer_vcd's Waveform API), a Rust-backed VCD parser. It deduplicates signals by VCD identifier code, so the backend parses the VCD header separately to recover all aliases (e.g., `tb.dut.rst_n` and `tb.dut.ff0.RST_N` sharing the same VCD id code).
 
-2. **pywellen backend** (`src/vcd/pywellen_backend.py`): Uses pywellen (or xtracer_vcd's Waveform API), a Rust-backed VCD parser. It deduplicates signals by VCD identifier code, so the backend parses the VCD header separately to recover all aliases (e.g., `tb.dut.rst_n` and `tb.dut.ff0.RST_N` sharing the same VCD id code).
+2. **pyvcd backend** (`src/vcd/pyvcd_backend.py`): Pure Python fallback using the pyvcd tokenizer. If the tokenizer fails (e.g., due to non-standard Cadence signal names like `signal[field_name]` with non-numeric brackets), it falls back to a hand-written line-by-line parser with binary I/O and 8 MB read buffers optimized for multi-GB files.
 
-3. **pyvcd backend** (`src/vcd/pyvcd_backend.py`): Pure Python fallback using the pyvcd tokenizer. If the tokenizer fails (e.g., due to non-standard Cadence signal names like `signal[field_name]` with non-numeric brackets), it falls back to a hand-written line-by-line parser with binary I/O and 8 MB read buffers optimized for multi-GB files.
+3. **Rust streaming backend** (`xtracer_vcd.extract_signals`): A Rust extension module that streams through the VCD file once, decoding only the requested signals. Currently disabled as the default path because `extract_signals` returns incorrect transitions for bus signals when filtering. Available for explicit use once the bug is fixed.
 
 ### PrefixMappedVCD for Hierarchy Translation
 
@@ -161,7 +168,9 @@ Loading all 28M signals from a 5.5 GB VCD would require tens of gigabytes of mem
 
 3. **Per-instance port signal addition**: For each gate in the cone, the CLI adds per-instance port signals (e.g., `gate.D`, `gate.Q`) that exist in the VCD. These per-instance signals are more accurate than bus-level wires in Xcelium simulations due to the bus-lag issue (see Section 5).
 
-4. **Filtered VCD loading**: Only the cone signals (typically 1K-10K out of 28M) are loaded from the VCD. For large VCDs (>100 MB), the fast extraction path writes a temporary mini-VCD containing only the matching transitions, then loads that mini-VCD with the standard parser.
+4. **Bit-indexed to bus-level mapping**: Cone signals are often bit-indexed (e.g., `foo[3]`) but VCD signals may be stored as bus-level names (e.g., `foo`). The CLI resolves this mismatch by stripping the bit index and checking if the base name exists in VCD signals, adding the bus-level name to the load set.
+
+5. **Filtered VCD loading**: Only the cone signals (typically 1K-10K out of 28M) are loaded from the VCD. For large VCDs (>100 MB), the fast extraction path writes a temporary mini-VCD containing only the matching transitions, then loads that mini-VCD with the standard parser.
 
 ### Timescale Handling
 
@@ -185,6 +194,8 @@ Preconditions verified before tracing:
 - Signal is X at the query time (`vcd.get_bit`)
 - Signal has drivers in the netlist (with a diagnostic error message if not, suggesting `--top-module` or `-n tb.v` if hierarchy mismatch is detected)
 
+The entry point temporarily raises Python's recursion limit to `max_depth * 4 + 1000` if needed, since deep sequential traces (e.g., 128-DFF LFSR at end of simulation with `--max-depth 500`) can exceed the default limit. The original limit is restored after the trace completes.
+
 ### Three-Color DFS (Reconvergent Fanin Prevention)
 
 The tracer uses a three-color DFS scheme to handle reconvergent fanin -- the situation where multiple paths through the combinational logic converge on the same signal:
@@ -197,13 +208,15 @@ Without this scheme, reconvergent fanin causes exponential blowup. Consider a si
 
 The `exploring` set (gray nodes) is distinct from `memo` (black nodes) because a node in the `exploring` set is not yet complete -- its children are still being processed. If we encounter it again, that is a true structural cycle, not a completed result to reuse.
 
-### Signal-Level Memoization (sig_memo)
+### Signal-Level Memoization (sig_memo + leaf_cache)
 
-In addition to the `(signal, bit, time)` memo, the tracer maintains a `sig_memo` keyed by `(signal, bit)` alone (without time). This allows reuse of combinational cone results across different query times.
+In addition to the `(signal, bit, time)` memo, the tracer maintains a `sig_memo` keyed by `(signal, bit)` alone (without time). This allows reuse of trace results across different query times. The netlist topology is fixed, so the same signal traced at a different time produces a structurally identical cause tree (same gates, same connections, same root causes).
 
-The optimization is safe only for combinational causes -- if a signal's root cause is a sequential element (DFF), the result is time-dependent and cannot be reused. The `sig_memo` explicitly excludes `sequential_capture`, `clock_x`, `async_control_x`, and `uninit_ff` cause types.
+The `sig_memo` caches results for all cause types except `max_depth` (since a deeper trace may go further). This is critical for sequential elements: without it, tracing the same DFF at every clock edge causes exponential blowup on designs like LFSRs where X propagates through many cycles.
 
-This optimization matters because temporal backtrack (see below) can re-query the same combinational cone at a different time than the original query.
+To prevent a second source of exponential blowup during JSON serialization (where shared subtree references get expanded into full copies), a separate `leaf_cache` stores the flattened leaf nodes for each `(signal, bit)`. When reusing a cached result, the tracer attaches the cached leaf nodes directly rather than sharing the full subtree.
+
+This optimization matters because temporal backtrack and D-input temporal skip (see below) can re-query the same cone at a different time than the original query.
 
 ### Cause Classification: 10 Cause Types
 
@@ -239,11 +252,15 @@ Sequential element tracing follows a strict priority order:
 
 3. **Multi-bit DFF D/Q matching.** Multi-bit cells like `DFFQNAA2W` have multiple D/Q pairs: `D0/QN0`, `D1/QN1`. When tracing `QN0`, the tracer matches the Q output port name suffix to find `D0` rather than the default D port. It does this by iterating over the gate's output ports to find which Q port drives the traced signal, extracting the trailing digit, and looking for `D<digit>` in the inputs.
 
-4. **Fallback: D at query time.** If D was not X at the clock edge but Q is X, the tracer checks D at the current query time. This handles cases where the X arrived after the edge but the VCD ordering makes it appear X.
+4. **D-input temporal skip.** When D is X at the clock edge, the tracer jumps to the *start of the current X window* on D using `vcd.find_x_start()` rather than tracing at `d_sample_time`. This prevents exponential blowup on designs like LFSRs where X propagates through many clock cycles. Without the skip, the tracer would walk back one clock cycle at a time through feedback loops, with the trace tree growing combinatorially (each DFF explored once per clock cycle, each exploration fanning out to multiple upstream DFFs).
 
-5. **Temporal backtrack.** If D is still not X, the tracer searches for when Q *first* became X using `vcd.first_x_time()`. It then finds the clock edge at or before that first-X time and checks D at that earlier edge. This handles pipeline stages where the X pulse has propagated through multiple DFFs. The search checks both the wire signal and the per-instance Q port signal (including escaped identifier forms) to find the earliest X time.
+   `find_x_start()` walks backward from the sample time through VCD transitions to find where the signal first became X in the *current continuous X window*. This is distinct from `first_x_time()` (which finds the first-ever X): if a signal goes X → known → X, the temporal skip must trace to the cause of the second X window, not the first.
 
-6. **Uninit fallback.** If no clock edge is found at all, or D was not X at any checked point, the tracer returns `uninit_ff` -- the flip-flop was never properly clocked with an X on D.
+5. **Fallback: D at query time.** If D was not X at the clock edge but Q is X, the tracer checks D at the current query time. This handles cases where the X arrived after the edge but the VCD ordering makes it appear X. The temporal skip is also applied on this path.
+
+6. **Temporal backtrack.** If D is still not X, the tracer searches for when Q *first* became X using `vcd.first_x_time()`. It then finds the clock edge at or before that first-X time and checks D at that earlier edge. This handles pipeline stages where the X pulse has propagated through multiple DFFs. The search checks both the wire signal and the per-instance Q port signal (including escaped identifier forms) to find the earliest X time.
+
+7. **Uninit fallback.** If no clock edge is found at all, or D was not X at any checked point, the tracer returns `uninit_ff` -- the flip-flop was never properly clocked with an X on D.
 
 **Latch handling.** For latches (detected by `latch` or `dlat` in the cell type), `_find_last_transparent()` searches for the last time the enable was active (value `'1'`) rather than looking for a clock edge.
 
@@ -366,7 +383,17 @@ This precision prevents false paths. For example, tracing through an AND2 where 
 
 **Real example:** In an LFSR chain, all DFFs have their Q, D, and CLK transitions at the same VCD timestamp (say 100). At time 100, D already shows the value driven by the downstream DFF's new Q. Sampling D at time 99 gets the pre-edge value that was actually captured.
 
-### 5. Temporal Backtrack for Pipeline Stages
+### 5. D-Input Temporal Skip (find_x_start)
+
+**Problem:** When tracing a DFF's X output, the tracer finds D was X at the last clock edge, recurses into the combinational logic driving D, reaches upstream DFFs, traces *those* back one clock edge, and so on. In designs with feedback (e.g., LFSRs), DFF_A traces to DFF_B which traces back to DFF_A at a different time. The `(signal, bit, time)` memoization key is unique for each clock edge, so the cache never hits. With 128 DFFs, XOR feedback, and 100 clock cycles between injection and query, the trace tree grows combinatorially.
+
+**Decision:** When D is X at a clock edge, jump to the *start of the current X window* on D using `vcd.find_x_start()` rather than tracing at the clock-edge sample time. `find_x_start()` walks backward through VCD transitions to find where the signal first became X in the current continuous X window. This collapses many clock cycles into a single jump.
+
+**Why find_x_start, not first_x_time:** A signal can go X → known → X (e.g., two independent X injections at different times). `first_x_time()` returns the start of the first-ever X window, which is causally irrelevant if the current X comes from the second injection. `find_x_start()` correctly identifies the start of the X window that actually contains the sample time.
+
+**Real example:** In a 2x2x2x2x8 LFSR grid (128 DFFs), X injected at t=1,080,000 causes all DFFs to be X by t=2,105,000 (100 clock cycles later). Without the temporal skip, tracing at t=2,105,000 with `--max-depth 500` would hang indefinitely. With the skip, the trace completes in under 2 seconds and correctly identifies the single primary_input root cause.
+
+### 6. Temporal Backtrack for Pipeline Stages
 
 **Problem:** A DFF's Q is X at the query time, but D was not X at the last clock edge. The X was captured at an earlier clock edge and has been sitting on Q ever since (no new edge to overwrite it).
 
@@ -374,7 +401,7 @@ This precision prevents false paths. For example, tracing through an AND2 where 
 
 **Real example:** In a 3-stage pipeline, the X originates in stage 1 at cycle 10. By cycle 15, it has propagated to stage 3's Q. If we query stage 3's Q at cycle 15, the last clock edge might show D as non-X (stage 2's output has since been overwritten). Temporal backtrack goes back to cycle 12 (when stage 3's Q first became X) and finds D was X at that earlier edge.
 
-### 6. Per-Instance Port Preference
+### 7. Per-Instance Port Preference
 
 **Problem:** Xcelium with `-xprop F` updates per-bit DFF Q values atomically at the gate evaluation time, but bus-level wire signals in the VCD may lag by a delta cycle. Reading the bus-level wire can show stale values.
 
@@ -382,7 +409,7 @@ This precision prevents false paths. For example, tracing through an AND2 where 
 
 **Real example:** After a clock edge at time 100, `rjn_top.u_soc.ff7.Q` shows `'x'` immediately, but `rjn_top.u_soc.data_bus[7]` still shows `'1'` from the previous cycle. The tracer reads `ff7.Q` to get the correct value.
 
-### 7. Controlling-Value Backward Analysis
+### 8. Controlling-Value Backward Analysis
 
 **Problem:** Naive "trace all X inputs" creates false paths through gates where the X input is irrelevant due to a controlling value on another input.
 
@@ -390,20 +417,38 @@ This precision prevents false paths. For example, tracing through an AND2 where 
 
 **Real example:** A `NAND2_X1M` gate has `A='0'` and `B='x'`. The output is `'1'` (not X). The tracer does not follow B's source, avoiding a potentially deep and irrelevant cone exploration.
 
-### 8. Assign Gate Passthrough
+### 9. Assign Gate Passthrough
 
 **Problem:** Continuous assign statements (`assign Y = X;`) appear as `assign`-type pseudo-gates. The gate model correctly predicts `forward(assign, {A: '0'}) = '0'`, but the signal Y might still be X in the VCD due to bus-level lag or delta-cycle issues.
 
 **Decision:** Always trace through `assign`/`buf`/`BUF` gates regardless of the forward prediction. These are pure wires that cannot inject X, so the X must come from the driving signal.
 
-### 9. Multi-Backend VCD Loading
+### 10. Multi-Backend VCD Loading
 
 **Problem:** Different VCD files have different characteristics. Cadence VCDs use non-standard signal naming. Multi-GB files need streaming I/O. Some environments lack Rust extensions.
 
 **Decision:** Three-backend cascade: Rust streaming (fastest, lowest memory) -> pywellen (Rust-backed, handles aliases) -> pyvcd (pure Python, most tolerant of non-standard VCDs). Each backend catches exceptions and falls through to the next.
 
-### 10. Femtosecond Internal Timescale
+### 11. Femtosecond Internal Timescale
 
 **Problem:** Cadence Xcelium uses `$timescale 1 fs`, meaning VCD time values are in femtoseconds. Users think in picoseconds. Other simulators use 1 ps or 1 ns.
 
 **Decision:** Store `timescale_fs` (femtoseconds per VCD time unit) and provide `ps_to_vcd()` / `vcd_to_ps()` conversion. The CLI accepts time in picoseconds and converts internally. VCD time 450000000 at 1 fs timescale = 450000 ps = 450 ns.
+
+### 12. Leaf-Flattened Signal Cache
+
+**Problem:** The `sig_memo` optimization shares subtree references across the cause tree. When serializing to JSON, shared references are expanded into full copies, causing exponential blowup in output size and serialization time.
+
+**Decision:** Maintain a separate `leaf_cache` dict keyed by `(signal, bit)` that stores the flattened leaf nodes (via `collect_leaves()`) for each cached result. When reusing a `sig_memo` entry, attach the cached leaf list as the `children` instead of the original subtree. This keeps the tree DAG-shaped but the serialized output linear-sized.
+
+### 13. Bit-Indexed Cone Signal Resolution
+
+**Problem:** The netlist graph uses bit-indexed signal keys (e.g., `foo[3]`), but the VCD may store the signal as a bus-level name (e.g., `foo`). When computing the VCD cone intersection, bit-indexed cone signals fail to match their bus-level VCD counterparts, causing signals to be omitted from the filtered VCD load.
+
+**Decision:** When building the VCD cone signal set, if a bit-indexed signal is not found in the VCD signal set, strip the bit index and check if the base name exists. This applies both with and without `--vcd-prefix` mapping.
+
+### 14. Source Location Tracking in Parsed Gates
+
+**Problem:** When debugging trace results, users need to find the netlist instantiation responsible for a gate in the cause tree. Without source locations, this requires manually searching multi-hundred-megabyte netlist files.
+
+**Decision:** The fast parser records `source_file` and `source_line` on each `Gate` object during parsing. For multi-line statements, the line number of the first line is used. The interactive mode displays this as `file:line` for quick navigation.
