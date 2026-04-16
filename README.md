@@ -234,6 +234,82 @@ python3 -m pytest tests/test_*.py -v
 python3 tests/validate.py
 ```
 
+## Adding New Cell Types
+
+The gate model is table-driven. Where you add a new cell depends on what kind it is:
+
+| Cell kind | Where to edit |
+|-----------|---------------|
+| Verilog primitive (e.g. a new tri-state variant) | `src/gates/primitives.py` + `src/gates/model.py` |
+| Standard cell family (e.g. `aoi32`, a new MUX size) | `src/gates/cells.py` |
+| New PDK naming convention (e.g. `mycorp_sc__`) | `src/gates/cells.py` (`_PDK_PREFIXES`) |
+
+### 1. New PDK prefix (simplest case)
+
+If the cell functions already exist but use an unfamiliar prefix, add it to `_PDK_PREFIXES` in `src/gates/cells.py:13`. `strip_cell_name` will then strip it before matching against the family patterns:
+
+```python
+_PDK_PREFIXES = [
+    'sky130_fd_sc_hd__',
+    ...
+    'mycorp_sc__',  # new
+]
+```
+
+Verify with a quick cell type stripped correctly:
+```python
+from src.gates.cells import strip_cell_name
+assert strip_cell_name('mycorp_sc__and2_4') == 'and2'
+```
+
+### 2. New standard cell family
+
+Three places in `src/gates/cells.py`:
+
+**a. `identify_cell`** — return a `CellInfo` when the stripped name matches. Examples already there: AOI/OAI regex groups, MUX2/MUX4, half/full adder, majority, tie cells, clock gates, DFF/latch.
+
+```python
+# New family "xyz3": 3-input custom gate
+if base in ('xyz3',):
+    return CellInfo('xyz3')
+```
+
+**b. `forward_cell`** — compute the output `'0'|'1'|'x'|'z'` from the `inputs` dict. Use the existing helpers in `src/gates/primitives.py` (`eval_and`, `eval_or`, `eval_xor`, …) and `_norm` to handle `z → x` folding.
+
+```python
+if fam == 'xyz3':
+    a = P._norm(inputs.get('A', 'x'))
+    b = P._norm(inputs.get('B', 'x'))
+    c = P._norm(inputs.get('C', 'x'))
+    return P.eval_and([a, P.eval_or([b, c])])
+```
+
+**c. `backward_cell`** — return the list of X-valued input ports that are *causally responsible* for the output being X. This is what drives the cause tree. For simple gates, delegate to the primitive `backward_*` helpers; for anything with a controlling value (AND/OR-style) only return inputs whose change could have flipped the output.
+
+```python
+if fam == 'xyz3':
+    # Conservative fallback: all X inputs are causal
+    return [p for p, v in inputs.items() if P._norm(v) == 'x']
+```
+
+A conservative `backward_cell` (returning all X inputs) is always correct but produces wider cause trees. A precise one mirrors the gate's controlling-value logic — see `_backward_aoi` / `_backward_mux2` for examples.
+
+### 3. New Verilog primitive
+
+Add the truth-table helper in `src/gates/primitives.py`, then wire it up in `src/gates/model.py`:
+- Add to `_PRIMITIVES` set (so `is_known_cell` reports True)
+- Add to the appropriate dispatch dict (`_MULTI_INPUT_FN`, `_TRISTATE_FN`, …) or a new `if ct == '…'` branch in `forward` / `backward_causes`
+
+### 4. Add a test
+
+Create a minimal synthetic case under `tests/cases/synthetic/gates/` with a netlist that instantiates the new cell and a VCD where it produces X. The generator scripts under `tests/generators/` (if present) or an existing case directory (e.g. `synth_s1_and_2in_xmask01_0/`) are good templates. Then:
+
+```bash
+python3 -m pytest tests/test_tracer.py -v -k <your_case_name>
+```
+
+Unknown cells fall through to the **conservative fallback** (`unknown_cell` cause type — all X inputs marked causal), so the tracer still works without a model; adding one just gives tighter cause trees.
+
 ## Limitations (v1)
 
 - No timing violation analysis (specify/notifier-based X)
