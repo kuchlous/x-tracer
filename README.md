@@ -41,7 +41,7 @@ For fast VCD parsing (optional), a Rust toolchain is also needed — install via
 
 ```bash
 # Clone
-git clone https://github.com/<your-org>/x-tracer.git
+git clone https://github.com/kuchlous/x-tracer.git
 cd x-tracer
 
 # Install dependencies
